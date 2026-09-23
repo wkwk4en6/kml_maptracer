@@ -1,12 +1,10 @@
-countries.json
-world-pmtiles/.DS_Store
-/world-pmtiles
-/temp_uploads
-countries.json
+# OS固有の隠しファイル（サブフォルダ内も含めて全て無視されます）
+.DS_Store
+
+# 大容量・一時ファイル群
 world-pmtiles/
-*.pmtiles
 temp_uploads/
+*.pmtiles
 *.fgb
 tree.txt
-.DS_Store
-assets/.DS_Store
+countries.json
