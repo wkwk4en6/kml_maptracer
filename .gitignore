@@ -1,0 +1,11 @@
+countries.json
+world-pmtiles/.DS_Store
+/world-pmtiles
+/temp_uploads
+countries.json
+world-pmtiles/
+*.pmtiles
+temp_uploads/
+*.fgb
+tree.txt
+.DS_Store
