@@ -96,10 +96,12 @@ http://localhost:8989
 │   ├── fonts/                  # オフライン用フォントデータ (.pbf)
 │   ├── maplibre/               # MapLibre GL JS (地図描画ライブラリ)
 │   └── pmtiles/                # PMTiles 解析用ライブラリ
+├── world-pmtiles/              # PMTiles データ格納用
+│   ├── planet_z0-z7.pmtiles
+│   └── *.pmtiles
 ├── index.html                  # メインUI画面
 ├── kml_maptracer.py            # ローカルWebサーバー用 Pythonスクリプト
 ├── requirements.txt            # Python 依存ライブラリ一覧
-├── world-pmtiles/              # ローカル地図データ格納用（.gitignore推奨）
 └── README.md
 ```
 ### ライセンス (License)
