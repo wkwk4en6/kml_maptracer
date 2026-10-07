@@ -255,7 +255,7 @@ class ExtendedRequestHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(err_bytes)
 
-        # 1. 時間範囲に応じたデータフィルタリング＆出力エンドポイント (/filter_points)
+        # 1. 時間範囲および表示範囲に応じたデータフィルタリング＆出力エンドポイント (/filter_points)
         elif self.path == '/filter_points':
             try:
                 content_length = int(self.headers.get('Content-Length', 0))
@@ -265,6 +265,7 @@ class ExtendedRequestHandler(SimpleHTTPRequestHandler):
                 start_time = req_data.get('start_time')
                 end_time = req_data.get('end_time')
                 limit = req_data.get('limit')
+                bounds = req_data.get('bounds')  # ★ 表示範囲を取得
 
                 filtered_features = []
                 total_matched = 0
@@ -280,6 +281,21 @@ class ExtendedRequestHandler(SimpleHTTPRequestHandler):
                             df_filtered = df_filtered[df_filtered['dt'] >= pd.to_datetime(start_time)]
                         if end_time:
                             df_filtered = df_filtered[df_filtered['dt'] <= pd.to_datetime(end_time)]
+
+                    # ★ 座標が表示範囲 (bounds) に収まっているかフィルタリングする処理を追加
+                    if bounds:
+                        min_lng = bounds.get('west')
+                        min_lat = bounds.get('south')
+                        max_lng = bounds.get('east')
+                        max_lat = bounds.get('north')
+
+                        if None not in (min_lng, min_lat, max_lng, max_lat):
+                            df_filtered = df_filtered[
+                                (df_filtered.geometry.x >= min_lng) &
+                                (df_filtered.geometry.x <= max_lng) &
+                                (df_filtered.geometry.y >= min_lat) &
+                                (df_filtered.geometry.y <= max_lat)
+                            ]
 
                     total_matched += len(df_filtered)
 

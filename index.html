@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8" />
-    <title>Offline Local Map KML Tracer</title>
+    <title>Offline Local KML MapTracer</title>
     <script src="./assets/maplibre/maplibre-gl.js"></script>
     <link href="./assets/maplibre/maplibre-gl.css" rel="stylesheet" />
     <script src="./assets/pmtiles/pmtiles.js"></script>
@@ -337,9 +337,12 @@
 
 <div id="kml-window" class="left-panel">
     <div class="section">
-        <div class="panel-header">
-            <h4 id="toggle-kml-btn" class="toggle-header">KML追加</h4>
-            <div style="display: flex; gap: 4px;">
+        <div class="panel-header" style="align-items: flex-start;">
+            <h4 id="toggle-kml-btn" class="toggle-header" style="margin-top: 3px;">KML追加</h4>
+            <div style="display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; max-width: 190px;">
+                <button id="btn-filter-bounds" class="btn-mini" style="background: #28a745; display: none;">表示範囲でフィルタ</button>
+                <!-- 改行用のダミー要素 -->
+                <div style="width: 100%; height: 0;"></div>
                 <button id="btn-3d-density" class="btn-mini" style="background: #17a2b8; display: none;">3D密度</button>
                 <button id="btn-toggle-number" class="btn-mini" style="background: #6c757d; display: none;">番号 OFF</button>
                 <button type="submit" form="kmlForm" id="btn-submit" class="btn-mini" style="display: none;">反映</button>
@@ -498,7 +501,6 @@
 
     // ズーム変更完了時に自動で3D密度グリッドを再計算・更新
     map.on('zoomend', () => {
-        // 3D密度表示が有効（レイヤーが存在する・または表示フラグがON）の場合に実行
         if (map.getLayer('density-3d-layer')) {
             updateDensityLayers();
         }
@@ -700,7 +702,6 @@
     }
 
     async function filterMapByTimeRange(startLabel, endLabel) {
-
         if (!startLabel || !endLabel) return;
 
         let startDate = parseLabelToDate(startLabel, true);
@@ -724,171 +725,12 @@
 
             const data = await res.json();
             const filteredPoints = data.points || [];
-            currentFilteredPoints = filteredPoints;
-
-            const groupedByFile = {};
-            const filteredPointsByFile = {};
-            kmlFiles.forEach(file => { 
-                groupedByFile[file.fileId] = [];
-                filteredPointsByFile[file.fileId] = [];
-            });
-
-            filteredPoints.forEach((pt, index) => {
-                const targetFileId = pt.file_id || pt.fileId || pt.track_id;
-                
-                if (targetFileId && groupedByFile[targetFileId]) {
-                    const lng = parseFloat(pt.lng ?? pt.longitude ?? (pt.coordinates ? pt.coordinates[0] : 0));
-                    const lat = parseFloat(pt.lat ?? pt.latitude ?? (pt.coordinates ? pt.coordinates[1] : 0));
-                    
-                    const parentFile = kmlFiles.find(f => f.fileId === targetFileId);
-                    const parentFileName = parentFile ? parentFile.fileName : "";
-
-                    const ptId = pt.id || `pt-filter-${index}`;
-                    const originalPt = parentFile?.points?.find(orig => 
-                        (orig.id && orig.id === ptId) || orig.seq === (pt.seq || pt.sequence)
-                    ) || {};
-
-                    // バックエンドから受信した一連番号 (pt.seq / sequence) を優先使用
-                    const seqVal = pt.seq ?? pt.sequence ?? originalPt.seq ?? (index + 1);
-
-                    const ptName = pt.name || originalPt.rawName || originalPt.name || pt.timestamp || `地点 ${seqVal}`;
-                    const ptDesc = pt.description || originalPt.description || originalPt["その他"] || `経度: ${lng}<br>緯度: ${lat}`;
-                    const ptAddress = pt.address || originalPt.address || '';
-
-                    groupedByFile[targetFileId].push({
-                        type: "Feature",
-                        geometry: { type: "Point", coordinates: [lng, lat] },
-                        properties: {
-                            seq: seqVal,
-                            id: String(ptId),
-                            name: ptName,
-                            address: ptAddress,
-                            timestamp: pt.timestamp || originalPt.timestamp,
-                            timestamp_ms: (pt.timestamp || originalPt.timestamp) ? new Date(pt.timestamp || originalPt.timestamp).getTime() : 0
-                        }
-                    });
-
-                    const pointData = {
-                        ...originalPt,
-                        ...pt,
-                        seq: seqVal,
-                        "ファイル名-番号": `${parentFileName}-#${seqVal}`, 
-                        name: pt.timestamp || originalPt.timestamp || ptName,
-                        rawName: originalPt.rawName || ptName,
-                        address: ptAddress,
-                        timestamp: pt.timestamp || originalPt.timestamp,
-                        coordinates: [lng, lat],
-                        altitude: pt.altitude || originalPt.altitude || (pt.ele ? `${pt.ele}m` : "0m"),
-                        description: ptDesc
-                    };
-
-                    filteredPointsByFile[targetFileId].push(pointData);
-                }
-            });
-
-            kmlFiles.forEach(file => {
-                const features = groupedByFile[file.fileId] || [];
-                const currentFilteredPointsFile = filteredPointsByFile[file.fileId] || [];
-                const sourceId = file.mapIds?.sourceId;
-
-                if (sourceId && map.getSource(sourceId)) {
-                    map.getSource(sourceId).setData({
-                        type: "FeatureCollection",
-                        features: features
-                    });
-                }
-
-                const selectEl = document.querySelector(`.track-color-select[data-track-id="${file.fileId}"]`);
-                const fileGroup = selectEl ? selectEl.closest('.mb-2') : null;
-
-                if (fileGroup) {
-                    const existingDetails = fileGroup.querySelector('details');
-                    if (existingDetails) existingDetails.remove();
-
-                    if (currentFilteredPointsFile.length > 0) {
-                        const details = document.createElement('details');
-                        details.open = false;
-                        
-                        const summary = document.createElement('summary');
-                        summary.style.cssText = 'cursor: pointer; font-size: 0.8rem; color: #555; margin-bottom: 4px;';
-                        
-                        const totalCount = file.points ? file.points.length : currentFilteredPointsFile.length;
-                        summary.innerHTML = `地点一覧 (<span id="point-count-${file.fileId}">${currentFilteredPointsFile.length.toLocaleString()} / ${totalCount.toLocaleString()}</span> 件)`;
-                        details.appendChild(summary);
-
-                        const pointsContainer = document.createElement('div');
-
-                        currentFilteredPointsFile.forEach((pt, index) => {
-                            const item = document.createElement('div');
-                            item.className = 'file-item';
-                            item.setAttribute('tabindex', '0');
-                            
-                            const seqVal = pt.seq !== undefined ? pt.seq : (index + 1);
-                            item.setAttribute('data-seq', seqVal);
-                            item.setAttribute('data-file-id', file.fileId);
-                            item.setAttribute('data-point-id', pt.db_id || pt.id || '');
-
-                            item.style.marginLeft = '12px';
-                            item.style.setProperty('border-left', `4px solid ${file.color || '#0078ff'}`, 'important');
-
-                            // 変更後（showNumberも判別対象に含め、要素のdisplayスタイルで制御）
-                            const isNumVisible = file.isNumberVisible !== undefined ? file.isNumberVisible : showNumber;
-                            const displayStyle = isNumVisible ? 'inline-block' : 'none';
-                            const seqHtml = `<span class="file-seq" style="display: ${displayStyle};">#${seqVal}</span>`;
-                            const addressHtml = pt.address ? `<div class="file-address" title="${pt.address}">${pt.address}</div>` : '';
-                            
-                            item.innerHTML = `
-                                ${seqHtml}
-                                <div class="file-info-wrapper">
-                                    <div class="file-name" title="${pt.name}">${pt.name}</div>
-                                    ${addressHtml}
-                                </div>
-                            `;
-
-                            let clickTimer = null;
-                            item.addEventListener('click', (e) => {
-                                if (clickTimer) {
-                                    clearTimeout(clickTimer);
-                                    clickTimer = null;
-
-                                    document.querySelectorAll('#file-list .file-item').forEach(el => el.classList.remove('active'));
-                                    item.classList.add('active');
-
-                                    map.flyTo({ center: pt.coordinates, zoom: 16, essential: true });
-                                    showPointPopup(pt, file.color || '#ff3344');
-                                } else {
-                                    clickTimer = setTimeout(() => {
-                                        clickTimer = null;
-
-                                        document.querySelectorAll('#file-list .file-item').forEach(el => el.style.background = 'transparent');
-                                        item.style.background = '#edf2f5';
-
-                                        // 現在のズームレベルを維持して中心移動
-                                        map.flyTo({ center: pt.coordinates, zoom: map.getZoom(), essential: true });
-                                        showPointPopup(pt, file.color || '#ff3344');
-                                    }, 250);
-                                }
-                            });
-
-                            pointsContainer.appendChild(item);
-                        });
-
-                        details.appendChild(pointsContainer);
-                        fileGroup.appendChild(details);
-                    }
-                }
-            });
-
-            if (densityMode !== 'off') {
-                updateDensityLayers();
-            }
+            
+            renderFilteredResults(filteredPoints);
 
             const totalReturned = data.returned_count || filteredPoints.length;
             document.getElementById('status-msg').innerText = `描画完了 (${totalReturned.toLocaleString()} 件)`;
 
-            if (typeof adjustKmlWindowPosition === 'function') {
-                adjustKmlWindowPosition();
-            }
         } catch (err) {
             console.error('💥 フィルタリング通信・処理エラー:', err);
             document.getElementById('status-msg').innerText = "マップフィルタリング処理に失敗しました";
@@ -965,6 +807,9 @@
         if (typeof adjustKmlWindowPosition === 'function') {
             adjustKmlWindowPosition();
         }
+
+        const currentInterval = document.getElementById('aggregate-interval')?.value || '1d';
+        fetchAndRenderAggregate(currentInterval);
     });
 
     map.addControl(new maplibregl.AttributionControl({
@@ -1064,7 +909,6 @@
             map.on('mouseleave', circleLayerId, () => { map.getCanvas().style.cursor = ''; });
         }
 
-        // --- 番号表示用のシンボルレイヤー設定 ---
         const targetFile = kmlFiles.find(f => f.fileId === trackId);
         const isVisible = targetFile ? !!targetFile.isNumberVisible : showNumber;
 
@@ -1104,6 +948,335 @@
         if (!chartBtn) return;
         chartBtn.style.display = (kmlFiles && kmlFiles.length > 0) ? 'block' : 'none';
     }
+    
+    async function filterMapByBounds() {
+        if (!kmlFiles || kmlFiles.length === 0) return;
+
+        const bounds = map.getBounds();
+        const boundsParam = {
+            west: bounds.getWest(),
+            south: bounds.getSouth(),
+            east: bounds.getEast(),
+            north: bounds.getNorth()
+        };
+
+        try {
+            document.getElementById('status-msg').innerText = '表示範囲で地点を抽出中...';
+
+            const res = await fetch('/filter_points', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bounds: boundsParam })
+            });
+
+            if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+
+            const data = await res.json();
+            const filteredPoints = data.points || [];
+
+            renderFilteredResults(filteredPoints);
+
+            const currentInterval = document.getElementById('aggregate-interval')?.value || '1d';
+            updateChartWithFilteredPoints(currentInterval);
+
+            const totalReturned = data.returned_count || filteredPoints.length;
+            document.getElementById('status-msg').innerText = `描画完了 (${totalReturned.toLocaleString()} 件)`;
+
+            const resetBtn = document.getElementById('btn-reset-zoom');
+            if (resetBtn) resetBtn.style.display = 'inline-block';
+
+        } catch (err) {
+            console.error('💥 表示範囲フィルタ処理エラー:', err);
+            document.getElementById('status-msg').innerText = "範囲フィルタ処理に失敗しました";
+        }
+    }
+
+    function renderFilteredResults(filteredPoints) {
+        currentFilteredPoints = filteredPoints;
+
+        const groupedByFile = {};
+        const filteredPointsByFile = {};
+        kmlFiles.forEach(file => { 
+            groupedByFile[file.fileId] = [];
+            filteredPointsByFile[file.fileId] = [];
+        });
+
+        filteredPoints.forEach((pt, index) => {
+            const targetFileId = pt.file_id || pt.fileId || pt.track_id;
+            
+            if (targetFileId && groupedByFile[targetFileId]) {
+                const lng = parseFloat(pt.lng ?? pt.longitude ?? (pt.coordinates ? pt.coordinates[0] : 0));
+                const lat = parseFloat(pt.lat ?? pt.latitude ?? (pt.coordinates ? pt.coordinates[1] : 0));
+                
+                const parentFile = kmlFiles.find(f => f.fileId === targetFileId);
+                const parentFileName = parentFile ? parentFile.fileName : "";
+
+                const ptId = pt.id || `pt-filter-${index}`;
+                const originalPt = parentFile?.points?.find(orig => 
+                    (orig.id && orig.id === ptId) || orig.seq === (pt.seq || pt.sequence)
+                ) || {};
+
+                const seqVal = pt.seq ?? pt.sequence ?? originalPt.seq ?? (index + 1);
+                const ptName = pt.name || originalPt.rawName || originalPt.name || pt.timestamp || `地点 ${seqVal}`;
+                const ptDesc = pt.description || originalPt.description || originalPt["その他"] || `経度: ${lng}<br>緯度: ${lat}`;
+                const ptAddress = pt.address || originalPt.address || '';
+
+                groupedByFile[targetFileId].push({
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [lng, lat] },
+                    properties: {
+                        seq: seqVal,
+                        id: String(ptId),
+                        name: ptName,
+                        address: ptAddress,
+                        timestamp: pt.timestamp || originalPt.timestamp,
+                        timestamp_ms: (pt.timestamp || originalPt.timestamp) ? new Date(pt.timestamp || originalPt.timestamp).getTime() : 0
+                    }
+                });
+
+                const pointData = {
+                    ...originalPt,
+                    ...pt,
+                    seq: seqVal,
+                    "ファイル名-番号": `${parentFileName}-#${seqVal}`, 
+                    name: pt.timestamp || originalPt.timestamp || ptName,
+                    rawName: originalPt.rawName || ptName,
+                    address: ptAddress,
+                    timestamp: pt.timestamp || originalPt.timestamp,
+                    coordinates: [lng, lat],
+                    altitude: pt.altitude || originalPt.altitude || (pt.ele ? `${pt.ele}m` : "0m"),
+                    description: ptDesc
+                };
+
+                filteredPointsByFile[targetFileId].push(pointData);
+            }
+        });
+
+        kmlFiles.forEach(file => {
+            const features = groupedByFile[file.fileId] || [];
+            const currentFilteredPointsFile = filteredPointsByFile[file.fileId] || [];
+            const sourceId = file.mapIds?.sourceId;
+
+            if (sourceId && map.getSource(sourceId)) {
+                map.getSource(sourceId).setData({
+                    type: "FeatureCollection",
+                    features: features
+                });
+            }
+
+            const selectEl = document.querySelector(`.track-color-select[data-track-id="${file.fileId}"]`);
+            const fileGroup = selectEl ? selectEl.closest('.mb-2') : null;
+
+            if (fileGroup) {
+                const existingDetails = fileGroup.querySelector('details');
+                if (existingDetails) existingDetails.remove();
+
+                if (currentFilteredPointsFile.length > 0) {
+                    const details = document.createElement('details');
+                    details.open = false;
+                    
+                    const summary = document.createElement('summary');
+                    summary.style.cssText = 'cursor: pointer; font-size: 0.8rem; color: #555; margin-bottom: 4px;';
+                    
+                    const totalCount = file.points ? file.points.length : currentFilteredPointsFile.length;
+                    summary.innerHTML = `地点一覧 (<span id="point-count-${file.fileId}">${currentFilteredPointsFile.length.toLocaleString()} / ${totalCount.toLocaleString()}</span> 件)`;
+                    details.appendChild(summary);
+
+                    const pointsContainer = document.createElement('div');
+
+                    currentFilteredPointsFile.forEach((pt, index) => {
+                        const item = document.createElement('div');
+                        item.className = 'file-item';
+                        item.setAttribute('tabindex', '0');
+                        
+                        const seqVal = pt.seq !== undefined ? pt.seq : (index + 1);
+                        item.setAttribute('data-seq', seqVal);
+                        item.setAttribute('data-file-id', file.fileId);
+                        item.setAttribute('data-point-id', pt.db_id || pt.id || '');
+
+                        item.style.marginLeft = '12px';
+                        item.style.setProperty('border-left', `4px solid ${file.color || '#0078ff'}`, 'important');
+
+                        const isNumVisible = file.isNumberVisible !== undefined ? file.isNumberVisible : showNumber;
+                        const displayStyle = isNumVisible ? 'inline-block' : 'none';
+                        const seqHtml = `<span class="file-seq" style="display: ${displayStyle};">#${seqVal}</span>`;
+                        const addressHtml = pt.address ? `<div class="file-address" title="${pt.address}">${pt.address}</div>` : '';
+                        
+                        item.innerHTML = `
+                            ${seqHtml}
+                            <div class="file-info-wrapper">
+                                <div class="file-name" title="${pt.name}">${pt.name}</div>
+                                ${addressHtml}
+                            </div>
+                        `;
+
+                        let clickTimer = null;
+                        item.addEventListener('click', (e) => {
+                            if (clickTimer) {
+                                clearTimeout(clickTimer);
+                                clickTimer = null;
+
+                                document.querySelectorAll('#file-list .file-item').forEach(el => el.classList.remove('active'));
+                                item.classList.add('active');
+
+                                map.flyTo({ center: pt.coordinates, zoom: 16, essential: true });
+                                showPointPopup(pt, file.color || '#ff3344');
+                            } else {
+                                clickTimer = setTimeout(() => {
+                                    clickTimer = null;
+
+                                    document.querySelectorAll('#file-list .file-item').forEach(el => el.style.background = 'transparent');
+                                    item.style.background = '#edf2f5';
+
+                                    map.flyTo({ center: pt.coordinates, zoom: map.getZoom(), essential: true });
+                                    showPointPopup(pt, file.color || '#ff3344');
+                                }, 250);
+                            }
+                        });
+
+                        pointsContainer.appendChild(item);
+                    });
+
+                    details.appendChild(pointsContainer);
+                    fileGroup.appendChild(details);
+                }
+            }
+        });
+
+        if (densityMode !== 'off') {
+            updateDensityLayers();
+        }
+
+        if (typeof adjustKmlWindowPosition === 'function') {
+            adjustKmlWindowPosition();
+        }
+    }
+
+    function updateChartWithFilteredPoints(interval) {
+        if (!currentFilteredPoints) {
+            fetchAndRenderAggregate(interval);
+            return;
+        }
+
+        const allBucketSet = new Set();
+        kmlFiles.forEach(file => {
+            if (file.points) {
+                file.points.forEach(pt => {
+                    if (!pt.timestamp) return;
+                    const dt = new Date(pt.timestamp);
+                    if (!isNaN(dt.getTime())) {
+                        allBucketSet.add(formatTimestampToBucket(dt, interval));
+                    }
+                });
+            }
+        });
+
+        currentFilteredPoints.forEach(pt => {
+            if (!pt.timestamp) return;
+            const dt = new Date(pt.timestamp);
+            if (!isNaN(dt.getTime())) {
+                allBucketSet.add(formatTimestampToBucket(dt, interval));
+            }
+        });
+
+        const sortedLabels = Array.from(allBucketSet).sort();
+
+        const bucketsMap = {};
+        let totalFilteredCount = 0;
+
+        currentFilteredPoints.forEach(pt => {
+            if (!pt.timestamp) return;
+            const dt = new Date(pt.timestamp);
+            if (isNaN(dt.getTime())) return;
+
+            const bucketLabel = formatTimestampToBucket(dt, interval);
+            const fileId = pt.file_id || pt.fileId || pt.track_id;
+            if (!fileId) return;
+
+            if (!bucketsMap[bucketLabel]) {
+                bucketsMap[bucketLabel] = {};
+            }
+            bucketsMap[bucketLabel][fileId] = (bucketsMap[bucketLabel][fileId] || 0) + 1;
+            totalFilteredCount++;
+        });
+
+        const datasets = kmlFiles.map(file => {
+            const counts = sortedLabels.map(label => {
+                return (bucketsMap[label] && bucketsMap[label][file.fileId]) ? bucketsMap[label][file.fileId] : 0;
+            });
+
+            return {
+                file_id: file.fileId,
+                file_name: file.fileName,
+                color: file.color || '#0078ff',
+                counts: counts
+            };
+        });
+
+        renderAggregateChart(sortedLabels, datasets);
+
+        let totalAllCount = 0;
+        kmlFiles.forEach(f => {
+            if (f.points) totalAllCount += f.points.length;
+        });
+
+        const countLabel = document.getElementById('selected-count-label');
+        if (countLabel) {
+            countLabel.innerText = `選択: ${totalFilteredCount.toLocaleString()} / ${totalAllCount.toLocaleString()} 件`;
+            countLabel.style.display = 'inline-block';
+        }
+    }
+
+    function formatTimestampToBucket(dateObj, interval) {
+        const y = dateObj.getFullYear();
+        const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+        const d = String(dateObj.getDate()).padStart(2, '0');
+        const h = String(dateObj.getHours()).padStart(2, '0');
+        const min = String(dateObj.getMinutes()).padStart(2, '0');
+
+        switch (interval) {
+            case '1y':
+                return `${y}年`;
+            case '3m': {
+                const q = Math.floor(dateObj.getMonth() / 3) + 1;
+                return `${y}-Q${q}`;
+            }
+            case '1m':
+                return `${y}-${m}`;
+            case '1w': {
+                const date = new Date(dateObj.getTime());
+                const day = date.getDay();
+                const diff = date.getDate() - day;
+                const weekStart = new Date(date.setDate(diff));
+                const wy = weekStart.getFullYear();
+                const wm = String(weekStart.getMonth() + 1).padStart(2, '0');
+                const wd = String(weekStart.getDate()).padStart(2, '0');
+                return `${wy}-${wm}-${wd} (週)`;
+            }
+            case '1d':
+                return `${y}-${m}-${d}`;
+            case '6h': {
+                const h6 = String(Math.floor(dateObj.getHours() / 6) * 6).padStart(2, '0');
+                return `${y}-${m}-${d} ${h6}:00`;
+            }
+            case '1h':
+                return `${y}-${m}-${d} ${h}:00`;
+            case '30m': {
+                const m30 = String(Math.floor(dateObj.getMinutes() / 30) * 30).padStart(2, '0');
+                return `${y}-${m}-${d} ${h}:${m30}`;
+            }
+            case '15m': {
+                const m15 = String(Math.floor(dateObj.getMinutes() / 15) * 15).padStart(2, '0');
+                return `${y}-${m}-${d} ${h}:${m15}`;
+            }
+            case '5m': {
+                const m5 = String(Math.floor(dateObj.getMinutes() / 5) * 5).padStart(2, '0');
+                return `${y}-${m}-${d} ${h}:${m5}`;
+            }
+            default:
+                return `${y}-${m}-${d}`;
+        }
+    }
 
     document.addEventListener('DOMContentLoaded', () => {
         const toggleNumberBtn = document.getElementById('btn-toggle-number');
@@ -1117,10 +1290,8 @@
 
                 toggleNumberBtn.textContent = showNumber ? '番号 ON' : '番号 OFF';
 
-                // 地図上の番号レイヤーの表示切り替え
                 updateNumberLayersVisibility();
 
-                // サイドバーリスト内の番号バッジ(#1等)の表示切り替え
                 document.querySelectorAll('#file-list .file-seq').forEach(seqEl => {
                     seqEl.style.display = showNumber ? 'inline-block' : 'none';
                 });
@@ -1166,27 +1337,35 @@
         const aggregateIntervalSelect = document.getElementById('aggregate-interval');
         if (aggregateIntervalSelect) {
             aggregateIntervalSelect.addEventListener('change', (e) => {
-                fetchAndRenderAggregate(e.target.value);
+                if (currentFilteredPoints && currentFilteredPoints.length > 0) {
+                    updateChartWithFilteredPoints(e.target.value);
+                } else {
+                    fetchAndRenderAggregate(e.target.value);
+                }
             });
         }
 
-        // ★ エクスポート処理機能の実装
         const exportBtn = document.getElementById('exportDataBtn');
         if (exportBtn) {
             exportBtn.addEventListener('click', exportData);
+        }
+
+        const boundsFilterBtn = document.getElementById('btn-filter-bounds');
+        if (boundsFilterBtn) {
+            boundsFilterBtn.addEventListener('click', () => {
+                filterMapByBounds();
+            });
         }
     });
 
     function updateNumberLayersVisibility() {
         kmlFiles.forEach(file => {
-            // 地図上レイヤーの更新
             const labelLayerId = file.mapIds?.layerLabelId;
             if (labelLayerId && map.getLayer(labelLayerId)) {
                 map.setLayoutProperty(labelLayerId, 'visibility', file.isNumberVisible ? 'visible' : 'none');
             }
         });
 
-        // サイドバーの地点一覧内バッジ表示を一括同期
         document.querySelectorAll('#file-list .file-seq').forEach(seqEl => {
             seqEl.style.display = showNumber ? 'inline-block' : 'none';
         });
@@ -1364,6 +1543,7 @@
         const container = document.getElementById('file-list-container');
         const numBtn = document.getElementById('btn-toggle-number');
         const densityBtn = document.getElementById('btn-3d-density');
+        const boundsBtn = document.getElementById('btn-filter-bounds');
         
         listDiv.innerHTML = '';
 
@@ -1371,11 +1551,13 @@
             if (container) container.style.display = 'none';
             if (numBtn) numBtn.style.display = 'none';
             if (densityBtn) densityBtn.style.display = 'none';
+            if (boundsBtn) boundsBtn.style.display = 'none';
             updateChartButtonVisibility();
             return;
         }
 
         if (densityBtn) densityBtn.style.display = 'inline-block';
+        if (boundsBtn) boundsBtn.style.display = 'inline-block';
         if (container) container.style.display = 'block';
 
         const isAnyVisible = kmlFiles.some(f => f.isNumberVisible);
@@ -1465,7 +1647,6 @@
                     item.style.marginLeft = '12px';
                     item.style.setProperty('border-left', `4px solid ${file.color || '#0078ff'}`, 'important');
 
-                    // 番号表示フラグに応じて display スタイルを設定
                     const isNumVisible = file.isNumberVisible !== undefined ? file.isNumberVisible : showNumber;
                     const displayStyle = isNumVisible ? 'inline-block' : 'none';
                     const seqHtml = `<span class="file-seq" style="display: ${displayStyle};">#${seqVal}</span>`;
@@ -1498,7 +1679,6 @@
                                 document.querySelectorAll('#file-list .file-item').forEach(el => el.style.background = 'transparent');
                                 item.style.background = '#edf2f5';
 
-                                // 現在のズームレベルを維持して中心移動
                                 map.flyTo({ center: pt.coordinates, zoom: map.getZoom(), essential: true });
                                 showPointPopup(pt, file.color || '#ff3344');
                             }, 250);
@@ -1593,14 +1773,11 @@
         }, 0);
     }
 
-    // アイテム選択＆地図中心移動用の共通関数
     function selectAndPanToItem(item) {
-        // 1. ハイライト処理
         const allItems = Array.from(document.querySelectorAll('#file-list .file-item'));
         allItems.forEach(i => i.style.background = 'transparent');
         item.style.background = '#edf2f5';
 
-        // 2. DOM属性からデータ取得
         const fileId = item.getAttribute('data-file-id');
         const seqVal = item.getAttribute('data-seq');
         const fileObj = kmlFiles.find(f => f.fileId === fileId);
@@ -1610,7 +1787,6 @@
         const pt = fileObj.points.find((p, idx) => (p.seq !== undefined ? String(p.seq) === String(seqVal) : String(idx + 1) === String(seqVal)));
         if (!pt || !pt.coordinates) return;
 
-        // 3. 現在のズームレベルを維持して中心移動しポップアップを表示
         map.flyTo({ center: pt.coordinates, zoom: map.getZoom(), essential: true });
         showPointPopup(pt, fileObj.color || '#ff3344');
     }
@@ -1647,7 +1823,6 @@
 
         targetItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 
-        // ズーム維持移動の関数を呼び出す
         selectAndPanToItem(targetItem);
     }
 
@@ -1700,7 +1875,6 @@
                     const f = features[i];
                     const props = f.properties || {};
                     
-                    // バックエンドからの一連番号 (props.seq や props.sequence) を取得、無ければインデックス(i+1)
                     const seqVal = props.seq ?? props.sequence ?? (i + 1);
 
                     const ts = props.timestamp || props.Time || props.time || props.when || null;
@@ -1739,7 +1913,6 @@
                 const geojson = { type: "FeatureCollection", features: features };
                 const mapIds = renderPointsOnMap(trackId, geojson, selectedColor);
 
-                // 地図の表示範囲（Bounds）を計算してフィットさせる
                 const bounds = new maplibregl.LngLatBounds();
                 geojson.features.forEach(f => {
                     if (f.geometry && f.geometry.coordinates) {
@@ -1751,7 +1924,6 @@
                     map.fitBounds(bounds, { padding: 50, maxZoom: 16 });
                 }
 
-                // 読み込み済みデータとして配列に追加
                 kmlFiles.push({
                     fileId: trackId,
                     fileName: file.name,
@@ -1770,9 +1942,8 @@
 
         if (successCount > 0) {
             document.getElementById('status-msg').innerText = `${successCount} 件のファイルを読み込みました`;
-            fileInput.value = ''; // フォームリセット
+            fileInput.value = '';
             
-            // サイドバーリストと集計グラフを更新
             updateSidebarFileList();
             const currentInterval = document.getElementById('aggregate-interval')?.value || '1d';
             fetchAndRenderAggregate(currentInterval);
@@ -1820,7 +1991,6 @@
         adjustKmlWindowPosition();
     });
 
-    // ★ エクスポート処理関数の定義
     function exportData() {
         const format = document.getElementById('exportFormat').value;
         let pointsToExport = [];
@@ -1846,7 +2016,7 @@
     }
 
     function exportCSV(points) {
-        let csvContent = "\uFEFF"; // UTF-8 BOM
+        let csvContent = "\uFEFF";
         csvContent += "ID,一連番号,名称,日時,住所,緯度,経度\n";
 
         points.forEach(pt => {
