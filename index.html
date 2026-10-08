@@ -341,7 +341,7 @@
             <h4 id="toggle-kml-btn" class="toggle-header" style="margin-top: 3px;">KML追加</h4>
             <div style="display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; max-width: 190px;">
                 <button id="btn-filter-bounds" class="btn-mini" style="background: #28a745; display: none;">表示範囲でフィルタ</button>
-                <!-- 改行用のダミー要素 -->
+                <button id="btn-reset-bounds" class="btn-mini" style="background: #6c757d; display: none;">選択解除</button>
                 <div style="width: 100%; height: 0;"></div>
                 <button id="btn-3d-density" class="btn-mini" style="background: #17a2b8; display: none;">3D密度</button>
                 <button id="btn-toggle-number" class="btn-mini" style="background: #6c757d; display: none;">番号 OFF</button>
@@ -388,7 +388,11 @@
     let currentMarker = null;
     let loadedLayers = {};
     let currentFilteredPoints = null;
+    let preBoundsFilteredPoints = null;
     let showNumber = false;
+
+    let currentTimeRange = null; // { start_time: string, end_time: string }
+    let currentBounds = null;    // { west, south, east, north }
 
     const worldPmtiles = new pmtiles.PMTiles(WORLD_PMTILES_URL);
     const japanPmtiles = new pmtiles.PMTiles(JAPAN_PMTILES_URL);
@@ -669,20 +673,18 @@
                                 const endLabel = chart.data.labels[maxIndex];
 
                                 if (startLabel && endLabel) {
+                                    // 1. サーバーへフィルタをリクエスト（実際の絞り込み結果件数を取得）
                                     await filterMapByTimeRange(startLabel, endLabel);
 
-                                    let totalCount = 0;
-                                    chart.data.datasets.forEach(dataset => {
-                                        for (let i = minIndex; i <= maxIndex; i++) {
-                                            totalCount += (dataset.data[i] || 0);
-                                        }
-                                    });
+                                    // 2. フィルタ完了後の実際の件数 (currentFilteredPoints) を取得
+                                    const actualCount = currentFilteredPoints ? currentFilteredPoints.length : 0;
 
                                     const countLabel = document.getElementById('selected-count-label');
                                     const resetBtn = document.getElementById('btn-reset-zoom');
 
                                     if (countLabel) {
-                                        countLabel.innerText = `${startLabel} 〜 ${endLabel} (選択: ${totalCount.toLocaleString()}件)`;
+                                        // サーバーから取得した正確な件数でラベルを表示
+                                        countLabel.innerText = `${startLabel} 〜 ${endLabel} (選択: ${actualCount.toLocaleString()}件)`;
                                         countLabel.style.display = 'inline-block';
                                     }
                                     if (resetBtn) {
@@ -701,6 +703,65 @@
         });
     }
 
+    // --- 1. 時間絞り込み関数の修正 ---
+    // ★ 時間と表示範囲を組み合わせてフィルタリングを実行する共通関数
+    async function applyCombinedFilter() {
+        if (!kmlFiles || kmlFiles.length === 0) return;
+
+        const requestBody = {};
+
+        if (currentTimeRange) {
+            requestBody.start_time = currentTimeRange.start_time;
+            requestBody.end_time = currentTimeRange.end_time;
+        }
+
+        if (currentBounds) {
+            requestBody.bounds = currentBounds;
+        }
+
+        try {
+            document.getElementById('status-msg').innerText = '地点データを抽出・描画中...';
+
+            const res = await fetch('/filter_points', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            });
+
+            if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+
+            const data = await res.json();
+            const filteredPoints = data.points || [];
+
+            currentFilteredPoints = filteredPoints;
+
+            // 地図上とサイドバーリストの描画更新
+            renderFilteredResults(filteredPoints);
+
+            // 時間別グラフの更新
+            const currentInterval = document.getElementById('aggregate-interval')?.value || '1d';
+            updateChartWithFilteredPoints(currentInterval);
+
+            const totalReturned = data.returned_count || filteredPoints.length;
+            document.getElementById('status-msg').innerText = `描画完了 (${totalReturned.toLocaleString()} 件)`;
+
+            // 各種ボタンの表示切り替え
+            if (currentBounds) {
+                const boundsResetBtn = document.getElementById('btn-reset-bounds');
+                if (boundsResetBtn) boundsResetBtn.style.display = 'inline-block';
+            }
+            if (currentTimeRange) {
+                const zoomResetBtn = document.getElementById('btn-reset-zoom');
+                if (zoomResetBtn) zoomResetBtn.style.display = 'inline-block';
+            }
+
+        } catch (err) {
+            console.error('💥 フィルタ処理エラー:', err);
+            document.getElementById('status-msg').innerText = "フィルタ処理に失敗しました";
+        }
+    }
+
+    // ★ 修正：時間別グラフ選択時の関数
     async function filterMapByTimeRange(startLabel, endLabel) {
         if (!startLabel || !endLabel) return;
 
@@ -709,32 +770,14 @@
 
         if (!startDate || !endDate) return;
 
-        const startTimeIso = startDate.toISOString();
-        const endTimeIso = endDate.toISOString();
+        // 時間範囲状態を更新
+        currentTimeRange = {
+            start_time: startDate.toISOString(),
+            end_time: endDate.toISOString()
+        };
 
-        try {
-            document.getElementById('status-msg').innerText = 'マップ表示ポイントを抽出中...';
-
-            const res = await fetch('/filter_points', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ start_time: startTimeIso, end_time: endTimeIso })
-            });
-
-            if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-
-            const data = await res.json();
-            const filteredPoints = data.points || [];
-            
-            renderFilteredResults(filteredPoints);
-
-            const totalReturned = data.returned_count || filteredPoints.length;
-            document.getElementById('status-msg').innerText = `描画完了 (${totalReturned.toLocaleString()} 件)`;
-
-        } catch (err) {
-            console.error('💥 フィルタリング通信・処理エラー:', err);
-            document.getElementById('status-msg').innerText = "マップフィルタリング処理に失敗しました";
-        }
+        // 時間と（もしあれば）表示範囲を掛け合わせて実行
+        await applyCombinedFilter();
     }
 
     function parseLabelToDate(labelStr, isStart) {
@@ -757,7 +800,8 @@
         return isNaN(d.getTime()) ? null : d;
     }
 
-    document.getElementById('btn-reset-zoom').addEventListener('click', function() {
+    // --- 3. グラフリセットボタン（btn-reset-zoom）のイベントリスナー修正 ---
+    document.getElementById('btn-reset-zoom').addEventListener('click', async function() {
         if (myChart) {
             myChart.resetZoom();
         }
@@ -767,49 +811,58 @@
         const countLabel = document.getElementById('selected-count-label');
         if (countLabel) countLabel.style.display = 'none';
 
-        currentFilteredPoints = null;
+        // 時間フィルタのみクリア
+        currentTimeRange = null;
 
-        kmlFiles.forEach(file => {
-            const sourceId = file.mapIds?.sourceId;
-            if (sourceId && map.getSource(sourceId) && file.points) {
-                const geojson = {
-                    type: "FeatureCollection",
-                    features: file.points.map((pt, index) => ({
-                        type: "Feature",
-                        geometry: { type: "Point", coordinates: pt.coordinates },
-                        properties: {
-                            seq: pt.seq !== undefined ? pt.seq : index + 1,
-                            id: pt.id,
-                            name: pt.name,
-                            address: pt.address || '',
-                            timestamp: pt.timestamp,
-                            timestamp_ms: pt.timestamp ? new Date(pt.timestamp).getTime() : 0
-                        }
-                    }))
-                };
-                map.getSource(sourceId).setData(geojson);
+        if (currentBounds) {
+            // 表示範囲フィルタが残っている場合は範囲指定のみで再適用
+            await applyCombinedFilter();
+        } else {
+            // 両方クリアされた場合は全件データ表示へ復元
+            currentFilteredPoints = null;
+
+            kmlFiles.forEach(file => {
+                const sourceId = file.mapIds?.sourceId;
+                if (sourceId && map.getSource(sourceId) && file.points) {
+                    const geojson = {
+                        type: "FeatureCollection",
+                        features: file.points.map((pt, index) => ({
+                            type: "Feature",
+                            geometry: { type: "Point", coordinates: pt.coordinates },
+                            properties: {
+                                seq: pt.seq !== undefined ? pt.seq : index + 1,
+                                id: pt.id,
+                                name: pt.name,
+                                address: pt.address || '',
+                                timestamp: pt.timestamp,
+                                timestamp_ms: pt.timestamp ? new Date(pt.timestamp).getTime() : 0
+                            }
+                        }))
+                    };
+                    map.getSource(sourceId).setData(geojson);
+                }
+
+                const itemElems = document.querySelectorAll(`#file-list .file-item[data-file-id="${file.fileId}"]`);
+                itemElems.forEach(el => el.style.display = 'flex');
+
+                const countElem = document.getElementById(`point-count-${file.fileId}`);
+                if (countElem && file.points) {
+                    const totalCount = file.points.length;
+                    countElem.textContent = `${totalCount.toLocaleString()} / ${totalCount.toLocaleString()}`;
+                }
+            });
+
+            if (densityMode !== 'off') {
+                updateDensityLayers();
             }
 
-            const itemElems = document.querySelectorAll(`#file-list .file-item[data-file-id="${file.fileId}"]`);
-            itemElems.forEach(el => el.style.display = 'flex');
-
-            const countElem = document.getElementById(`point-count-${file.fileId}`);
-            if (countElem && file.points) {
-                const totalCount = file.points.length;
-                countElem.textContent = `${totalCount.toLocaleString()} / ${totalCount.toLocaleString()}`;
+            if (typeof adjustKmlWindowPosition === 'function') {
+                adjustKmlWindowPosition();
             }
-        });
 
-        if (densityMode !== 'off') {
-            updateDensityLayers();
+            const currentInterval = document.getElementById('aggregate-interval')?.value || '1d';
+            fetchAndRenderAggregate(currentInterval);
         }
-
-        if (typeof adjustKmlWindowPosition === 'function') {
-            adjustKmlWindowPosition();
-        }
-
-        const currentInterval = document.getElementById('aggregate-interval')?.value || '1d';
-        fetchAndRenderAggregate(currentInterval);
     });
 
     map.addControl(new maplibregl.AttributionControl({
@@ -949,46 +1002,38 @@
         chartBtn.style.display = (kmlFiles && kmlFiles.length > 0) ? 'block' : 'none';
     }
     
+    async function resetBoundsFilter() {
+        const resetBoundsBtn = document.getElementById('btn-reset-bounds');
+        if (resetBoundsBtn) resetBoundsBtn.style.display = 'none';
+
+        // 表示範囲状態のみを解除
+        currentBounds = null;
+
+        if (currentTimeRange) {
+            // 時間フィルタがまだ効いている場合は時間フィルタのみで再計算
+            await applyCombinedFilter();
+        } else {
+            // 時間フィルタも無ければ全件リセット
+            document.getElementById('btn-reset-zoom')?.click();
+        }
+    }
+
+    // --- 2. 表示範囲フィルタ関数の修正 ---
     async function filterMapByBounds() {
         if (!kmlFiles || kmlFiles.length === 0) return;
 
         const bounds = map.getBounds();
-        const boundsParam = {
+        
+        // 表示範囲状態を更新
+        currentBounds = {
             west: bounds.getWest(),
             south: bounds.getSouth(),
             east: bounds.getEast(),
             north: bounds.getNorth()
         };
 
-        try {
-            document.getElementById('status-msg').innerText = '表示範囲で地点を抽出中...';
-
-            const res = await fetch('/filter_points', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bounds: boundsParam })
-            });
-
-            if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-
-            const data = await res.json();
-            const filteredPoints = data.points || [];
-
-            renderFilteredResults(filteredPoints);
-
-            const currentInterval = document.getElementById('aggregate-interval')?.value || '1d';
-            updateChartWithFilteredPoints(currentInterval);
-
-            const totalReturned = data.returned_count || filteredPoints.length;
-            document.getElementById('status-msg').innerText = `描画完了 (${totalReturned.toLocaleString()} 件)`;
-
-            const resetBtn = document.getElementById('btn-reset-zoom');
-            if (resetBtn) resetBtn.style.display = 'inline-block';
-
-        } catch (err) {
-            console.error('💥 表示範囲フィルタ処理エラー:', err);
-            document.getElementById('status-msg').innerText = "範囲フィルタ処理に失敗しました";
-        }
+        // 時間（もしあれば）と表示範囲を掛け合わせて実行
+        await applyCombinedFilter();
     }
 
     function renderFilteredResults(filteredPoints) {
@@ -1356,6 +1401,14 @@
                 filterMapByBounds();
             });
         }
+
+        const boundsResetBtn = document.getElementById('btn-reset-bounds');
+        if (boundsResetBtn) {
+            boundsResetBtn.addEventListener('click', () => {
+                resetBoundsFilter();
+            });
+        }
+
     });
 
     function updateNumberLayersVisibility() {

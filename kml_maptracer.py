@@ -265,7 +265,7 @@ class ExtendedRequestHandler(SimpleHTTPRequestHandler):
                 start_time = req_data.get('start_time')
                 end_time = req_data.get('end_time')
                 limit = req_data.get('limit')
-                bounds = req_data.get('bounds')  # ★ 表示範囲を取得
+                bounds = req_data.get('bounds')
 
                 filtered_features = []
                 total_matched = 0
@@ -275,14 +275,16 @@ class ExtendedRequestHandler(SimpleHTTPRequestHandler):
                     if gdf.empty:
                         continue
 
-                    df_filtered = gdf
-                    if 'timestamp' in gdf.columns:
+                    df_filtered = gdf.copy()
+
+                    # ★ 1. 時間によるフィルタリング
+                    if 'timestamp' in gdf.columns and 'dt' in gdf.columns:
                         if start_time:
                             df_filtered = df_filtered[df_filtered['dt'] >= pd.to_datetime(start_time)]
                         if end_time:
                             df_filtered = df_filtered[df_filtered['dt'] <= pd.to_datetime(end_time)]
 
-                    # ★ 座標が表示範囲 (bounds) に収まっているかフィルタリングする処理を追加
+                    # ★ 2. 表示範囲(bounds)によるフィルタリング（上記で絞り込まれた結果に対してさらに適用）
                     if bounds:
                         min_lng = bounds.get('west')
                         min_lat = bounds.get('south')
@@ -327,8 +329,6 @@ class ExtendedRequestHandler(SimpleHTTPRequestHandler):
                     'returned_count': len(filtered_features),
                     'points': filtered_features
                 }
-
-                print(f"[LOG /filter_points] 抽出完了: 条件マッチ={total_matched}件, 返却={len(filtered_features)}件")
 
                 response_bytes = json.dumps(response_data, ensure_ascii=False).encode('utf-8')
                 self.send_response(200)
