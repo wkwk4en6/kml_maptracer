@@ -382,6 +382,11 @@
     const SERVER_HOST = window.location.host;
     const WORLD_PMTILES_URL = `http://${SERVER_HOST}/world-pmtiles/planet_z0-z7.pmtiles`;
     const JAPAN_PMTILES_URL = `http://${SERVER_HOST}/world-pmtiles/japan.pmtiles`;
+
+    const worldPmtiles = new pmtiles.PMTiles(WORLD_PMTILES_URL);
+    const japanPmtiles = new pmtiles.PMTiles(JAPAN_PMTILES_URL);
+    const countryPmtilesMap = {};
+
     
     let kmlFiles = []; 
     let activeIndex = -1;
@@ -394,61 +399,74 @@
     let currentTimeRange = null; // { start_time: string, end_time: string }
     let currentBounds = null;    // { west, south, east, north }
 
-    const worldPmtiles = new pmtiles.PMTiles(WORLD_PMTILES_URL);
-    const japanPmtiles = new pmtiles.PMTiles(JAPAN_PMTILES_URL);
-    const countryPmtilesMap = {};
-
     let chartMarkers = [];
     let myChart = null;
     let densityMode = 'off';
 
     maplibregl.addProtocol("pmtiles", (request, callback) => {
-        const match = request.url.match(/pmtiles:\/\/(world|japan|country\/[^/]+)\/(\d+)\/(\d+)\/(\d+)/);
+        // pmtiles://<sourceKey>/<z>/<x>/<y> 形式を判定
+        const match = request.url.match(/pmtiles:\/\/(.+)\/(\d+)\/(\d+)\/(\d+)/);
         if (match) {
-            const sourceKey = match[1];
+            const rawKey = match[1]; // "world", "japan", または "country/taiwan"
             const z = +match[2];
             const x = +match[3];
             const y = +match[4];
             
-            let targetPmtiles;
-            if (sourceKey === 'world') {
+            let targetPmtiles = null;
+
+            if (rawKey === 'world') {
                 targetPmtiles = worldPmtiles;
-            } else if (sourceKey === 'japan') {
+            } else if (rawKey === 'japan') {
                 targetPmtiles = japanPmtiles;
-            } else if (sourceKey.startsWith('country/')) {
-                const countryId = sourceKey.replace('country/', '');
+            } else if (rawKey.startsWith('country/')) {
+                const countryId = rawKey.replace('country/', '');
                 targetPmtiles = countryPmtilesMap[countryId];
             }
 
-            if (!targetPmtiles) {
-                callback(new Error("PMTiles instance not found"));
-                return { cancel: () => {} };
+            // 指定されたPMTilesインスタンスからタイルを取得
+            if (targetPmtiles) {
+                targetPmtiles.getZxy(z, x, y).then(tile => {
+                    if (tile) {
+                        callback(null, tile.data, null, null);
+                    } else if (rawKey === 'world') {
+                        // world リクエスト時のフォールバック処理
+                        fallbackWorldTiles(z, x, y, callback);
+                    } else {
+                        callback(new Error(`Tile not found for ${rawKey}`));
+                    }
+                }).catch(err => {
+                    if (rawKey === 'world') {
+                        fallbackWorldTiles(z, x, y, callback);
+                    } else {
+                        callback(err);
+                    }
+                });
+            } else if (rawKey === 'world') {
+                fallbackWorldTiles(z, x, y, callback);
+            } else {
+                callback(new Error(`PMTiles instance not found: ${rawKey}`));
             }
-
-            targetPmtiles.getZxy(z, x, y).then(tile => {
-                if (tile) {
-                    callback(null, tile.data, null, null);
-                } else if (sourceKey === 'world') {
-                    japanPmtiles.getZxy(z, x, y).then(japanTile => {
-                        if (japanTile) callback(null, japanTile.data, null, null);
-                        else callback(new Error("Tile not found"));
-                    }).catch(err => callback(err));
-                } else {
-                    callback(new Error("Tile not found"));
-                }
-            }).catch(err => {
-                if (sourceKey === 'world') {
-                    japanPmtiles.getZxy(z, x, y).then(japanTile => {
-                        if (japanTile) callback(null, japanTile.data, null, null);
-                        else callback(new Error("Tile not found in fallback"));
-                    }).catch(fallbackErr => callback(fallbackErr));
-                } else {
-                    callback(err);
-                }
-            });
         }
         return { cancel: () => {} };
     });
+
+    // worldプロトコル用のフォールバックヘルパー関数
+    async function fallbackWorldTiles(z, x, y, callback) {
+        // 1. 国別PMTilesを先にチェック
+        for (const countryId in countryPmtilesMap) {
+            try {
+                const cTile = await countryPmtilesMap[countryId].getZxy(z, x, y);
+                if (cTile) return callback(null, cTile.data, null, null);
+            } catch(e) {}
+        }
+        // 2. 日本PMTilesをチェック
+        try {
+            const jTile = await japanPmtiles.getZxy(z, x, y);
+            if (jTile) return callback(null, jTile.data, null, null);
+        } catch(e) {}
+
+        callback(new Error("Tile not found in any fallback PMTiles"));
+    }
 
     const map = new maplibregl.Map({
         container: 'map',
@@ -502,6 +520,121 @@
         zoom: 3,
         attributionControl: false
     });
+
+    // countries.json を読み込んで各国の PMTiles インスタンスを自動登録
+    fetch(`http://${SERVER_HOST}/countries.json`)
+    .then(res => res.json())
+    .then(countries => {
+        countries.forEach(countryId => {
+            if (countryId !== 'japan' && countryId !== 'planet_z0-z7') {
+                const url = `http://${SERVER_HOST}/world-pmtiles/${countryId}.pmtiles`;
+                countryPmtilesMap[countryId] = new pmtiles.PMTiles(url);
+
+                // 地図の準備ができていればソースとレイヤーを追加
+                if (map.isStyleLoaded()) {
+                    addCountryLayers(countryId);
+                }
+            }
+        });
+    })
+    .catch(err => console.error("countries.json 読み込み失敗:", err));
+
+    // 2. 地図のスタイルロード完了時にも実行
+    map.on('load', () => {
+        Object.keys(countryPmtilesMap).forEach(countryId => {
+            addCountryLayers(countryId);
+        });
+    });
+
+    // 3. 国別 PMTiles 用のソースと描画レイヤーを動的に追加する関数
+    function addCountryLayers(countryId) {
+        if (!map) return;
+        const sourceId = `country-${countryId}-source`;
+
+        // 既にソースが存在していればスキップ
+        if (map.getSource(sourceId)) return;
+
+        // ソースの追加
+        map.addSource(sourceId, {
+            type: "vector",
+            tiles: [`pmtiles://country/${countryId}/{z}/{x}/{y}`],
+            minzoom: 0,
+            maxzoom: 14
+        });
+
+        // 1. 道路（streets）レイヤー
+        map.addLayer({
+            "id": `country-${countryId}-streets`,
+            "type": "line",
+            "source": sourceId,
+            "source-layer": "streets",
+            "minzoom": 7,
+            "paint": {
+                "line-color": [
+                    "match", ["get", "kind"],
+                    "motorway", "#f3b080",
+                    "trunk", "#fcd798",
+                    "primary", "#fff1b8",
+                    "#ffffff"
+                ],
+                "line-width": ["interpolate", ["linear"], ["zoom"], 7, 0.5, 14, 3]
+            }
+        }, "japan-boundaries");
+
+        // 2. 建物（buildings）レイヤー
+        map.addLayer({
+            "id": `country-${countryId}-buildings`,
+            "type": "fill",
+            "source": sourceId,
+            "source-layer": "buildings",
+            "minzoom": 13,
+            "paint": {
+                "fill-color": "#e2e2e2",
+                "fill-outline-color": "#d0d0d0"
+            }
+        }, `country-${countryId}-streets`);
+
+        // ★ 3. 地名・都市名ラベル（place_labels）レイヤー（追加）
+        map.addLayer({
+            "id": `country-${countryId}-place-labels`,
+            "type": "symbol",
+            "source": sourceId,
+            "source-layer": "place_labels", // Shortbread規格の地名レイヤー
+            "minzoom": 4,
+            "layout": {
+                "text-field": ["coalesce", ["get", "name_ja"], ["get", "name_en"], ["get", "name"]],
+                "text-font": ["Open Sans Regular"],
+                "text-size": ["interpolate", ["linear"], ["zoom"], 4, 10, 14, 15],
+                "text-max-width": 8
+            },
+            "paint": {
+                "text-color": "#333333",
+                "text-halo-color": "#ffffff",
+                "text-halo-width": 2
+            }
+        });
+
+        // ★ 4. 施設・POIラベル（pois）レイヤー（追加）
+        map.addLayer({
+            "id": `country-${countryId}-poi-labels`,
+            "type": "symbol",
+            "source": sourceId,
+            "source-layer": "pois", // Shortbread規格のPOIレイヤー
+            "minzoom": 12,
+            "layout": {
+                "text-field": ["coalesce", ["get", "name_ja"], ["get", "name_en"], ["get", "name"]],
+                "text-font": ["Open Sans Regular"],
+                "text-size": 11,
+                "text-offset": [0, 0.6],
+                "text-anchor": "top"
+            },
+            "paint": {
+                "text-color": "#00695c",
+                "text-halo-color": "#ffffff",
+                "text-halo-width": 1.5
+            }
+        });
+    }
 
     // ズーム変更完了時に自動で3D密度グリッドを再計算・更新
     map.on('zoomend', () => {
