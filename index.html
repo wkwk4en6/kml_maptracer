@@ -478,7 +478,7 @@
                     type: "vector",
                     tiles: ["pmtiles://world/{z}/{x}/{y}"],
                     minzoom: 0,
-                    maxzoom: 8
+                    maxzoom: 7
                 },
                 "japan-shortbread": {
                     type: "vector",
@@ -806,22 +806,65 @@
                                 const endLabel = chart.data.labels[maxIndex];
 
                                 if (startLabel && endLabel) {
-                                    // 1. サーバーへフィルタをリクエスト（実際の絞り込み結果件数を取得）
-                                    await filterMapByTimeRange(startLabel, endLabel);
+                                    let startDate = parseLabelToDate(startLabel, true);
+                                    let endDate = parseLabelToDate(endLabel, false);
 
-                                    // 2. フィルタ完了後の実際の件数 (currentFilteredPoints) を取得
-                                    const actualCount = currentFilteredPoints ? currentFilteredPoints.length : 0;
+                                    if (!startDate || !endDate) return;
 
-                                    const countLabel = document.getElementById('selected-count-label');
-                                    const resetBtn = document.getElementById('btn-reset-zoom');
+                                    // 時間範囲の状態を更新
+                                    currentTimeRange = {
+                                        start_time: startDate.toISOString(),
+                                        end_time: endDate.toISOString()
+                                    };
 
-                                    if (countLabel) {
-                                        // サーバーから取得した正確な件数でラベルを表示
-                                        countLabel.innerText = `${startLabel} 〜 ${endLabel} (選択: ${actualCount.toLocaleString()}件)`;
-                                        countLabel.style.display = 'inline-block';
+                                    // チャートを再描画せずに、地図やリストのフィルタリングのみを実行
+                                    if (!kmlFiles || kmlFiles.length === 0) return;
+
+                                    const requestBody = {};
+                                    if (currentTimeRange) {
+                                        requestBody.start_time = currentTimeRange.start_time;
+                                        requestBody.end_time = currentTimeRange.end_time;
                                     }
-                                    if (resetBtn) {
-                                        resetBtn.style.display = 'inline-block';
+                                    if (currentBounds) {
+                                        requestBody.bounds = currentBounds;
+                                    }
+
+                                    try {
+                                        document.getElementById('status-msg').innerText = '地点データを抽出・描画中...';
+
+                                        const res = await fetch('/filter_points', {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify(requestBody)
+                                        });
+
+                                        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+
+                                        const data = await res.json();
+                                        const filteredPoints = data.points || [];
+                                        currentFilteredPoints = filteredPoints;
+
+                                        // 地図上とサイドバーリストの描画更新（※グラフの再描画は行わない）
+                                        renderFilteredResults(filteredPoints);
+
+                                        const actualCount = currentFilteredPoints ? currentFilteredPoints.length : 0;
+                                        const countLabel = document.getElementById('selected-count-label');
+                                        const resetBtn = document.getElementById('btn-reset-zoom');
+
+                                        if (countLabel) {
+                                            countLabel.innerText = `${startLabel} 〜 ${endLabel} (選択: ${actualCount.toLocaleString()}件)`;
+                                            countLabel.style.display = 'inline-block';
+                                        }
+                                        if (resetBtn) {
+                                            resetBtn.style.display = 'inline-block';
+                                        }
+
+                                        const totalReturned = data.returned_count || filteredPoints.length;
+                                        document.getElementById('status-msg').innerText = `描画完了 (${totalReturned.toLocaleString()} 件)`;
+
+                                    } catch (err) {
+                                        console.error('💥 フィルタ処理エラー:', err);
+                                        document.getElementById('status-msg').innerText = "フィルタ処理に失敗しました";
                                     }
                                 }
                             }
