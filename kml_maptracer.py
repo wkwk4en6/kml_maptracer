@@ -17,6 +17,19 @@ from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 import reverse_geocoder as rg
 import pycountry
 
+import time
+import tzlocal # ※インストールされていない場合は pip install tzlocal が必要です
+
+# --- サーバー起動時にローカルタイムゾーンを自動取得（失敗時は JST にフォールバック） ---
+try:
+    LOCAL_TIMEZONE = tzlocal.get_localzone_name()
+    if not LOCAL_TIMEZONE:
+        raise ValueError("Empty timezone detected")
+except Exception as e:
+    LOCAL_TIMEZONE = 'Asia/Tokyo'
+
+print(f"[Info] サーバーのタイムゾーンを固定しました: {LOCAL_TIMEZONE}")
+
 # Nominatim インスタンスの初期化
 geolocator = Nominatim(user_agent="range_server_app")
 
@@ -267,6 +280,8 @@ class ExtendedRequestHandler(SimpleHTTPRequestHandler):
                 limit = req_data.get('limit')
                 bounds = req_data.get('bounds')
 
+                print(f"[DEBUG /filter_points] 受信した時間条件 -> start_time: {start_time}, end_time: {end_time}")
+
                 filtered_features = []
                 total_matched = 0
 
@@ -277,14 +292,30 @@ class ExtendedRequestHandler(SimpleHTTPRequestHandler):
 
                     df_filtered = gdf.copy()
 
-                    # ★ 1. 時間によるフィルタリング
-                    if 'timestamp' in gdf.columns and 'dt' in gdf.columns:
-                        if start_time:
-                            df_filtered = df_filtered[df_filtered['dt'] >= pd.to_datetime(start_time)]
-                        if end_time:
-                            df_filtered = df_filtered[df_filtered['dt'] <= pd.to_datetime(end_time)]
+                    # ★ 1. DataFrame側の dt カラム型とタイムゾーンを比較用に正規化
+                    if 'dt' in df_filtered.columns:
+                        df_filtered['dt'] = pd.to_datetime(df_filtered['dt'])
+                        if hasattr(df_filtered['dt'].dt, 'tz') and df_filtered['dt'].dt.tz is not None:
+                            df_filtered['dt'] = df_filtered['dt'].dt.tz_convert(None)
 
-                    # ★ 2. 表示範囲(bounds)によるフィルタリング（上記で絞り込まれた結果に対してさらに適用）
+                    # ★ 時間によるフィルタリングの適用（LOCAL_TIMEZONEでハードコード固定して比較）
+                    if start_time:
+                        start_dt = pd.to_datetime(start_time)
+                        if start_dt.tzinfo is not None:
+                            start_dt = start_dt.tz_convert(LOCAL_TIMEZONE).tz_localize(None)
+                        else:
+                            start_dt = start_dt.tz_localize('UTC').tz_convert(LOCAL_TIMEZONE).tz_localize(None)
+                        df_filtered = df_filtered[df_filtered['dt'] >= start_dt]
+
+                    if end_time:
+                        end_dt = pd.to_datetime(end_time)
+                        if end_dt.tzinfo is not None:
+                            end_dt = end_dt.tz_convert(LOCAL_TIMEZONE).tz_localize(None)
+                        else:
+                            end_dt = end_dt.tz_localize('UTC').tz_convert(LOCAL_TIMEZONE).tz_localize(None)
+                        df_filtered = df_filtered[df_filtered['dt'] <= end_dt]
+
+                    # ★ 3. 表示範囲(bounds)によるフィルタリングの適用
                     if bounds:
                         min_lng = bounds.get('west')
                         min_lat = bounds.get('south')
@@ -362,6 +393,14 @@ class ExtendedRequestHandler(SimpleHTTPRequestHandler):
                 for file_id, file_info in DATA_CACHE.items():
                     gdf = file_info['gdf'].copy()
                     if not gdf.empty and 'dt' in gdf.columns:
+                        # データの dt カラムを LOCAL_TIMEZONE に統一
+                        dt_series = pd.to_datetime(gdf['dt'])
+                        if dt_series.dt.tz is not None:
+                            gdf['dt'] = dt_series.dt.tz_convert(LOCAL_TIMEZONE).dt.tz_localize(None)
+                        else:
+                            # タイムゾーン情報がない場合は、UTC等の不整合を防ぐためローカル時間として扱う
+                            gdf['dt'] = dt_series.dt.tz_localize('UTC', ambiguous='NaT', nonexistent='shift_forward').dt.tz_convert(LOCAL_TIMEZONE).dt.tz_localize(None)
+
                         color_val = updated_colors.get(file_id)
                         if isinstance(color_val, dict):
                             current_color = color_val.get('color', file_info.get('color', '#0078ff'))
@@ -563,7 +602,11 @@ class ExtendedRequestHandler(SimpleHTTPRequestHandler):
                 gdf.to_file(fgb_path, driver="FlatGeobuf", SPATIAL_INDEX="NO")
 
                 if 'timestamp' in gdf.columns:
-                    gdf['dt'] = pd.to_datetime(gdf['timestamp'])
+                    dt_series = pd.to_datetime(gdf['timestamp'], errors='coerce')
+                    if dt_series.dt.tz is not None:
+                        gdf['dt'] = dt_series.dt.tz_convert(LOCAL_TIMEZONE).dt.tz_localize(None)
+                    else:
+                        gdf['dt'] = dt_series.dt.tz_localize('UTC', ambiguous='NaT', nonexistent='shift_forward').dt.tz_convert(LOCAL_TIMEZONE).dt.tz_localize(None)
 
                 DATA_CACHE[file_id] = {
                     'gdf': gdf,
