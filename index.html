@@ -1350,23 +1350,76 @@
     }
 
     function updateChartWithFilteredPoints(interval) {
-        if (!currentFilteredPoints) {
+        if (!currentFilteredPoints || currentFilteredPoints.length === 0) {
             fetchAndRenderAggregate(interval);
             return;
         }
 
-        const allBucketSet = new Set();
-
-        // フィルタされたポイント（選択範囲内）のタイムスタンプだけからバケット（ラベル）を生成する
+        // 1. フィルタされた全ポイントから有効な日付（タイムスタンプ）を抽出
+        const validDates = [];
         currentFilteredPoints.forEach(pt => {
             if (!pt.timestamp) return;
             const dt = new Date(pt.timestamp);
             if (!isNaN(dt.getTime())) {
-                allBucketSet.add(formatTimestampToBucket(dt, interval));
+                validDates.push(dt);
             }
         });
 
-        const sortedLabels = Array.from(allBucketSet).sort();
+        if (validDates.length === 0) {
+            fetchAndRenderAggregate(interval);
+            return;
+        }
+
+        // 2. データの最小日時と最大日時を算出
+        let minDate = new Date(Math.min(...validDates));
+        let maxDate = new Date(Math.max(...validDates));
+
+        // ★ 追加: 日単位（1d）やそれ以上の単位のときに最後の1日分が切れないよう、最大日時の時間をその日の終わりに合わせる、または余裕を持たせる
+        if (interval === '1d' || interval === '1w' || interval === '1m' || interval === '3m' || interval === '1y') {
+            maxDate.setHours(23, 59, 59, 999);
+        }
+
+        // 3. 選択されたインターバル（集計単位）に応じて、最小〜最大の間にあるすべてのバケットを自動生成
+        const sortedLabels = [];
+        let curr = new Date(minDate.getTime());
+        // 日付単位で比較するため、curr の時間も一旦 00:00:00 に切り捨てておくと確実です
+        if (interval === '1d') {
+            curr.setHours(0, 0, 0, 0);
+        }
+
+        let safetyCounter = 0;
+        while (curr <= maxDate && safetyCounter < 10000) {
+            sortedLabels.push(formatTimestampToBucket(curr, interval));
+
+            // インターバルに応じて次のステップに進める
+            if (interval === '1y') {
+                curr.setFullYear(curr.getFullYear() + 1);
+            } else if (interval === '3m') {
+                curr.setMonth(curr.getMonth() + 3);
+            } else if (interval === '1m') {
+                curr.setMonth(curr.getMonth() + 1);
+            } else if (interval === '1w') {
+                curr.setDate(curr.getDate() + 7);
+            } else if (interval === '1d') {
+                curr.setDate(curr.getDate() + 1);
+            } else if (interval === '6h') {
+                curr.setHours(curr.getHours() + 6);
+            } else if (interval === '1h') {
+                curr.setHours(curr.getHours() + 1);
+            } else if (interval === '30m') {
+                curr.setMinutes(curr.getMinutes() + 30);
+            } else if (interval === '15m') {
+                curr.setMinutes(curr.getMinutes() + 15);
+            } else if (interval === '5m') {
+                curr.setMinutes(curr.getMinutes() + 5);
+            } else {
+                curr.setHours(curr.getHours() + 1);
+            }
+            safetyCounter++;
+        }
+
+        // 重複を除外してソート
+        const uniqueLabels = Array.from(new Set(sortedLabels)).sort();
 
         const bucketsMap = {};
         let totalFilteredCount = 0;
@@ -1388,7 +1441,7 @@
         });
 
         const datasets = kmlFiles.map(file => {
-            const counts = sortedLabels.map(label => {
+            const counts = uniqueLabels.map(label => {
                 return (bucketsMap[label] && bucketsMap[label][file.fileId]) ? bucketsMap[label][file.fileId] : 0;
             });
 
@@ -1400,7 +1453,7 @@
             };
         });
 
-        renderAggregateChart(sortedLabels, datasets);
+        renderAggregateChart(uniqueLabels, datasets);
 
         let totalAllCount = 0;
         kmlFiles.forEach(f => {
