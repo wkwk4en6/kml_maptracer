@@ -5,9 +5,9 @@ click-plugins==1.1.1.2
 cligj==0.7.2
 fiona==1.10.1
 geographiclib==2.1
-geopandas==1.1.4
+geopandas==1.2.0
 geopy==2.5.0
-numpy==2.5.3
+numpy==2.5.4
 packaging==26.3
 pandas==3.0.6
 pycountry==26.2.16
@@ -16,7 +16,8 @@ pyproj==3.8.0
 python-dateutil==2.9.0.post0
 reverse_geocoder==1.5.1
 scipy==1.18.1
-setuptools==83.0.0
-shapely==2.1.2
+setuptools==84.0.0
+shapely==2.2.0
 six==1.17.0
+tzlocal==5.4.4
 wheel==0.47.0
