@@ -280,7 +280,9 @@ class ExtendedRequestHandler(SimpleHTTPRequestHandler):
                 limit = req_data.get('limit')
                 bounds = req_data.get('bounds')
 
-                print(f"[DEBUG /filter_points] 受信した時間条件 -> start_time: {start_time}, end_time: {end_time}")
+                # ★ バックエンドで受信した条件をターミナルに詳細出力
+                print(f"[DEBUG /filter_points] 受信条件 -> start_time: {start_time}, end_time: {end_time}")
+                print(f"[DEBUG /filter_points] 受信Bounds -> {json.dumps(bounds, ensure_ascii=False) if bounds else '未指定'}")
 
                 filtered_features = []
                 total_matched = 0
@@ -837,8 +839,13 @@ class ExtendedRequestHandler(SimpleHTTPRequestHandler):
 
                         if not matched.empty:
                             row_gdf = matched.iloc[[0]].copy()
-                            row_gdf['source_file_id'] = file_id
-                            row_gdf['source_file_name'] = DATA_CACHE[file_id].get('name', '')
+                            row_gdf['file_id'] = file_id
+                            
+                            # ▼ ここでファイル名の列を追加・保持する
+                            file_name_val = DATA_CACHE[file_id].get('name', '')
+                            row_gdf['file_name'] = file_name_val
+                            row_gdf['source_file_name'] = file_name_val
+                            
                             exported_rows.append(row_gdf)
 
                     if matched.empty:
@@ -865,27 +872,25 @@ class ExtendedRequestHandler(SimpleHTTPRequestHandler):
                 import uuid
                 export_id = str(uuid.uuid4())[:8]
 
-                # --- 1. CSV 出力 ---
+                # --- CSV 出力 ---
                 if export_format == 'csv':
                     out_path = os.path.join(temp_dir, f'export_{export_id}.csv')
                     df = export_gdf.copy()
 
+                    # 必要に応じてカラムの順序を整理（file_nameを前の方に配置）
+                    desired_cols = ['id', 'seq', 'file_name', 'name', 'timestamp', 'address', 'latitude', 'longitude']
+                    existing_cols = [c for c in desired_cols if c in df.columns]
+                    other_cols = [c for c in df.columns if c not in desired_cols and c != 'geometry']
+                    
+                    # ジオメトリから緯度経度を確実に取り出す処理など
                     if 'geometry' in df.columns:
                         if 'longitude' not in df.columns:
                             df['longitude'] = df.geometry.apply(lambda g: g.x if hasattr(g, 'x') and g else None)
                         if 'latitude' not in df.columns:
                             df['latitude'] = df.geometry.apply(lambda g: g.y if hasattr(g, 'y') and g else None)
-                        
-                        df['geometry_wkt'] = df.geometry.apply(lambda g: g.wkt if g else '')
                         df = df.drop(columns=['geometry'])
 
-                    cols_to_drop = [c for c in ['dt'] if c in df.columns]
-                    if cols_to_drop:
-                        df = df.drop(columns=cols_to_drop)
-
-                    df.to_csv(out_path, index=False, encoding='utf-8-sig')
-                    content_type = 'text/csv; charset=utf-8'
-                    filename = f'exported_points_{export_id}.csv'
+                    df.to_csv(out_path, index=False, encoding='utf-8-sig', columns=[c for c in desired_cols + other_cols if c in df.columns])
 
                 # --- 2. KML 出力 ---
                 elif export_format == 'kml':

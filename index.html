@@ -871,6 +871,8 @@
             requestBody.bounds = currentBounds;
         }
 
+        console.log("[Frontend Filter Request] 送信パラメータ:", JSON.stringify(requestBody, null, 2));
+
         try {
             document.getElementById('status-msg').innerText = '地点データを抽出・描画中...';
 
@@ -2302,18 +2304,24 @@
 
     function exportCSV(points) {
         let csvContent = "\uFEFF";
-        csvContent += "ID,一連番号,名称,日時,住所,緯度,経度\n";
+        // ヘッダーに「ファイル名」を追加
+        csvContent += "ID,一連番号,ファイル名,名称,日時,住所,緯度,経度\n";
 
         points.forEach(pt => {
             const id = pt.id || '';
             const seq = pt.seq !== undefined ? pt.seq : '';
+            
+            // ファイル名の取得（pt.file_name や親ファイルから取得するなど）
+            const fileName = (pt.file_name || pt.fileName || '').replace(/"/g, '""');
+            
             const name = (pt.name || pt.rawName || '').replace(/"/g, '""');
             const timestamp = pt.timestamp || '';
             const address = (pt.address || '').replace(/"/g, '""');
             const lat = pt.coordinates ? pt.coordinates[1] : (pt.lat || '');
             const lng = pt.coordinates ? pt.coordinates[0] : (pt.lng || '');
 
-            csvContent += `"${id}","${seq}","${name}","${timestamp}","${address}",${lat},${lng}\n`;
+            // 各行にファイル名を出力に追加
+            csvContent += `"${id}","${seq}","${fileName}","${name}","${timestamp}","${address}",${lat},${lng}\n`;
         });
 
         downloadFile(csvContent, 'export_points.csv', 'text/csv;charset=utf-8;');
@@ -2321,9 +2329,9 @@
 
     function exportKML(points) {
         let kmlContent = `<?xml version="1.0" encoding="UTF-8"?>
-            <kml xmlns="http://www.opengis.net/kml/2.2">
-            <Document>
-                <name>Exported Points</name>\n`;
+    <kml xmlns="http://www.opengis.net/kml/2.2">
+    <Document>
+        <name>Exported Points</name>\n`;
 
         points.forEach(pt => {
             const name = pt.name || pt.rawName || '地点';
@@ -2331,15 +2339,23 @@
             const timestamp = pt.timestamp || '';
             const lat = pt.coordinates ? pt.coordinates[1] : (pt.lat || 0);
             const lng = pt.coordinates ? pt.coordinates[0] : (pt.lng || 0);
+            
+            // ファイル名の取得（pt.file_name や pt.fileName から取得）
+            const fileName = pt.file_name || pt.fileName || '';
 
             kmlContent += `    <Placemark>
             <name>${escapeXml(name)}</name>
             <address>${escapeXml(address)}</address>
             ${timestamp ? `<TimeStamp><when>${timestamp}</when></TimeStamp>` : ''}
+            <ExtendedData>
+                <Data name="file_name">
+                    <value>${escapeXml(fileName)}</value>
+                </Data>
+            </ExtendedData>
             <Point>
                 <coordinates>${lng},${lat},0</coordinates>
             </Point>
-            </Placemark>\n`;
+        </Placemark>\n`;
         });
 
         kmlContent += `  </Document>\n</kml>`;
