@@ -2305,10 +2305,24 @@
         let pointsToExport = [];
 
         if (currentFilteredPoints && currentFilteredPoints.length > 0) {
-            pointsToExport = currentFilteredPoints;
+            pointsToExport = currentFilteredPoints.map(pt => {
+                // ポイントに対応する親ファイルを探して file_name を補完
+                const parentFile = kmlFiles.find(f => f.fileId === (pt.file_id || pt.fileId || pt.track_id));
+                return {
+                    ...pt,
+                    file_id: pt.file_id || pt.fileId || pt.track_id || parentFile?.fileId,
+                    file_name: pt.file_name || parentFile?.fileName || ''
+                };
+            });
         } else {
             kmlFiles.forEach(f => {
-                if (f.points) pointsToExport.push(...f.points);
+                if (f.points) {
+                    pointsToExport.push(...f.points.map(pt => ({
+                        ...pt,
+                        file_id: f.fileId,
+                        file_name: f.fileName
+                    })));
+                }
             });
         }
 

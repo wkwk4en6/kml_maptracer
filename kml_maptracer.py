@@ -37,44 +37,51 @@ geolocator = Nominatim(user_agent="range_server_app")
 DATA_CACHE = {}
 
 def safe_decode_header(header_val):
-    """MIMEエンコードおよびRFC2231/UTF-8生のファイル名を安全にデコードする"""
+    """マルチバイトファイル名を安全にデコードする（文字化け防止強化版）"""
     if not header_val:
         return "uploaded_track.kml"
     
-    # RFC 2231 形式 (filename*=utf-8''...) の処理
+    # 1. URLエンコードされている場合のデコード
+    try:
+        if '%' in header_val:
+            header_val = urllib.parse.unquote(header_val)
+    except Exception:
+        pass
+    
+    # 2. RFC 2231 形式 (filename*=utf-8''...) の処理
     if "''" in header_val:
         try:
-            return urllib.parse.unquote(header_val.split("''")[-1])
+            parts = header_val.split("''")
+            encoding = parts[0].strip() or 'utf-8'
+            return urllib.parse.unquote(parts[-1], encoding=encoding)
         except Exception:
             pass
 
+    # 3. バイト列としてのデコード試行（cp932/shift_jis/utf-8）
+    for enc in ['utf-8', 'cp932', 'shift_jis', 'euc-jp']:
+        try:
+            if isinstance(header_val, bytes):
+                return header_val.decode(enc)
+            else:
+                # 文字列になっている場合は一度ラテン1などでバイトに戻して再デコードを試みる
+                return header_val.encode('latin1').decode(enc)
+        except Exception:
+            continue
+
+    # 4. 最終フォールバック
     try:
         decoded_segments = decode_header(header_val)
         result_bytes = b""
         for text, encoding in decoded_segments:
             if isinstance(text, bytes):
-                if encoding:
-                    try:
-                        result_bytes += text.decode(encoding).encode('utf-8')
-                    except Exception:
-                        # cp932/shift_jis などの フォールバック
-                        try:
-                            result_bytes += text.decode('cp932').encode('utf-8')
-                        except Exception:
-                            result_bytes += text
-                else:
-                    try:
-                        result_bytes += text.decode('utf-8').encode('utf-8')
-                    except Exception:
-                        try:
-                            result_bytes += text.decode('cp932').encode('utf-8')
-                        except Exception:
-                            result_bytes += text
+                enc = encoding if encoding else 'utf-8'
+                try:
+                    result_bytes += text.decode(enc).encode('utf-8')
+                except Exception:
+                    result_bytes += text
             elif isinstance(text, str):
                 result_bytes += text.encode('utf-8')
-        
-        decoded_str = result_bytes.decode('utf-8', errors='replace')
-        return decoded_str if decoded_str else "uploaded_track.kml"
+        return result_bytes.decode('utf-8', errors='replace')
     except Exception:
         return str(header_val)
 
@@ -511,30 +518,51 @@ class ExtendedRequestHandler(SimpleHTTPRequestHandler):
 
                 body = self.rfile.read(content_length)
 
-                msg_bytes = f"Content-Type: {content_type}\r\n\r\n".encode('utf-8', errors='surrogateescape') + body
-                msg = email.message_from_bytes(msg_bytes)
-
                 file_data = None
                 original_filename = "uploaded_track.kml"
                 color = "青"
 
-                for part in msg.walk():
-                    fn = part.get_filename()
-                    disp = part.get('Content-Disposition', '')
+                # 簡易的かつ確実に multipart/form-data からファイル名とバイナリを抽出する処理
+                content_type = self.headers.get('Content-Type', '')
+                if 'boundary=' in content_type:
+                    boundary = content_type.split('boundary=')[-1].encode('utf-8')
+                    parts = body.split(b'--' + boundary)
+                    
+                    for p in parts:
+                        if b'filename=' in p:
+                            try:
+                                # ヘッダー部分とボディ部分に分割
+                                header_part, data_part = p.split(b'\r\n\r\n', 1)
+                                if data_part.endswith(b'\r\n'):
+                                    data_part = data_part[:-2]
+                                
+                                file_data = data_part
 
-                    if fn or 'filename=' in disp:
-                        file_data = part.get_payload(decode=True)
+                                # ヘッダーから filename を抽出（バイト列のままデコードを試みる）
+                                fn_match = re.search(rb'filename="([^"]+)"', header_part)
+                                if fn_match:
+                                    raw_fn_bytes = fn_match.group(1)
+                                    # UTF-8、CP932、Latin-1を順番に試してデコード
+                                    for enc in ['utf-8', 'cp932', 'shift_jis', 'latin1']:
+                                        try:
+                                            original_filename = raw_fn_bytes.decode(enc)
+                                            if enc == 'latin1':
+                                                # latin1でデコードできた場合は、再度utf-8等のバイトに戻してデコードを試す
+                                                original_filename = raw_fn_bytes.decode('latin1').encode('utf-8').decode('utf-8', errors='ignore')
+                                            break
+                                        except Exception:
+                                            continue
+                            except Exception as parse_err:
+                                print(f"[WARNING] マルチパート解析エラー: {parse_err}")
                         
-                        if fn:
-                            original_filename = safe_decode_header(fn)
-                        elif 'filename=' in disp:
-                            raw_fn = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';]+)["\']?', disp, re.IGNORECASE)
-                            if raw_fn:
-                                raw_val = raw_fn.group(1)
-                                original_filename = safe_decode_header(urllib.parse.unquote(raw_val))
-
-                    elif 'name="color"' in disp:
-                        color = part.get_payload(decode=True).decode('utf-8', errors='ignore')
+                        elif b'name="color"' in p:
+                            try:
+                                header_part, data_part = p.split(b'\r\n\r\n', 1)
+                                if data_part.endswith(b'\r\n'):
+                                    data_part = data_part[:-2]
+                                color = data_part.decode('utf-8', errors='ignore')
+                            except Exception:
+                                pass
 
                 if not file_data:
                     self.send_error(400, "Bad Request: File not found in POST request")
