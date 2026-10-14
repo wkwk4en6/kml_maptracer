@@ -487,33 +487,11 @@
                     maxzoom: 14
                 }
             },
+
             layers: [ 
                 { "id": "background", "type": "background", "paint": { "background-color": "#f0f0f0" } },
                 { "id": "world-ocean", "type": "fill", "source": "world-shortbread", "source-layer": "ocean", "maxzoom": 11, "paint": { "fill-color": "#a0c8f0" } },
-                { "id": "world-water", "type": "fill", "source": "world-shortbread", "source-layer": "water", "maxzoom": 11, "paint": { "fill-color": "#a0c8f0" } },
-                { "id": "japan-sites-green", "type": "fill", "source": "japan-shortbread", "source-layer": "sites", "minzoom": 10, "paint": { "fill-color": "#c8e6c9", "fill-opacity": 0.6 } },
-                { "id": "japan-ocean", "type": "fill", "source": "japan-shortbread", "source-layer": "ocean", "minzoom": 10, "paint": { "fill-color": "#a0c8f0" } },
-                { "id": "japan-water-polygons", "type": "fill", "source": "japan-shortbread", "source-layer": "water_polygons", "minzoom": 11, "paint": { "fill-color": "#a0c8f0" } },
-                { "id": "japan-buildings", "type": "fill", "source": "japan-shortbread", "source-layer": "buildings", "minzoom": 13, "paint": { "fill-color": "#e2e2e2", "fill-outline-color": "#d0d0d0" } },
-                { 
-                    "id": "japan-streets", "type": "line", "source": "japan-shortbread", "source-layer": "streets", "minzoom": 10,
-                    "paint": { 
-                        "line-color": [
-                            "match", ["get", "kind"],
-                            "motorway", "#f3b080",
-                            "trunk", "#fcd798",
-                            "primary", "#fff1b8",
-                            "#ffffff"
-                        ],
-                        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1, 14, 4] 
-                    } 
-                },
-                { "id": "japan-railway-fg", "type": "line", "source": "japan-shortbread", "source-layer": "railway", "minzoom": 11, "paint": { "line-color": "#777777", "line-width": 1.2, "line-dasharray": [3, 3] } },
-                { "id": "japan-boundaries", "type": "line", "source": "japan-shortbread", "source-layer": "boundaries", "minzoom": 6, "paint": { "line-color": "#888888", "line-width": ["interpolate", ["linear"], ["zoom"], 6, 1, 13, 2], "line-dasharray": [4, 3] } },
-                { "id": "japan-poi-labels", "type": "symbol", "source": "japan-shortbread", "source-layer": "pois", "minzoom": 13, "layout": { "text-field": ["coalesce", ["get", "name_ja"], ["get", "name"]], "text-font": ["Open Sans Regular"], "text-size": 10, "text-offset": [0, 0.6], "text-anchor": "top" }, "paint": { "text-color": "#00695c", "text-halo-color": "#ffffff", "text-halo-width": 1.5 } },
-                { "id": "japan-label-detail", "type": "symbol", "source": "japan-shortbread", "source-layer": "place_labels", "minzoom": 12.5, "filter": ["in", "kind", "suburb", "neighbourhood", "quarter", "locality"], "layout": { "text-field": ["coalesce", ["get", "name_ja"], ["get", "name"]], "text-font": ["Open Sans Regular"], "text-size": 11 }, "paint": { "text-color": "#555555", "text-halo-color": "#ffffff", "text-halo-width": 1.5 } },
-                { "id": "japan-label-city", "type": "symbol", "source": "japan-shortbread", "source-layer": "place_labels", "minzoom": 8, "maxzoom": 16, "filter": ["in", "kind", "city", "town", "village"], "layout": { "text-field": ["coalesce", ["get", "name_ja"], ["get", "name"]], "text-font": ["Open Sans Regular"], "text-size": 14 }, "paint": { "text-color": "#333333", "text-halo-color": "#ffffff", "text-halo-width": 2 } },
-                { "id": "japan-label-prefecture", "type": "symbol", "source": "japan-shortbread", "source-layer": "boundary_labels", "minzoom": 4, "maxzoom": 11, "filter": ["in", "admin_level", 4, "4"], "layout": { "text-field": ["coalesce", ["get", "name_ja"], ["get", "name"]], "text-font": ["Open Sans Regular"], "text-size": 17, "text-allow-overlap": false }, "paint": { "text-color": "#222222", "text-halo-color": "#ffffff", "text-halo-width": 2 } }
+                { "id": "world-water", "type": "fill", "source": "world-shortbread", "source-layer": "water", "maxzoom": 11, "paint": { "fill-color": "#a0c8f0" } }
             ]
         },
         center: [135.5193310, 34.6838040], 
@@ -525,50 +503,104 @@
     fetch(`http://${SERVER_HOST}/countries.json`)
     .then(res => res.json())
     .then(countries => {
+        // まず日本を共通レイヤーとして追加
+        if (map.isStyleLoaded()) {
+            addStandardLayers('japan');
+        }
+
         countries.forEach(countryId => {
             if (countryId !== 'japan' && countryId !== 'planet_z0-z7') {
                 const url = `http://${SERVER_HOST}/world-pmtiles/${countryId}.pmtiles`;
                 countryPmtilesMap[countryId] = new pmtiles.PMTiles(url);
 
-                // 地図の準備ができていればソースとレイヤーを追加
                 if (map.isStyleLoaded()) {
-                    addCountryLayers(countryId);
+                    addStandardLayers(countryId);
                 }
             }
         });
     })
     .catch(err => console.error("countries.json 読み込み失敗:", err));
 
-    // 2. 地図のスタイルロード完了時にも実行
+    // マップのスタイルロード完了時にも実行
     map.on('load', () => {
+        addStandardLayers('japan');
+
         Object.keys(countryPmtilesMap).forEach(countryId => {
-            addCountryLayers(countryId);
+            addStandardLayers(countryId);
         });
     });
 
-    // 3. 国別 PMTiles 用のソースと描画レイヤーを動的に追加する関数
-    function addCountryLayers(countryId) {
+// 日本および各国の共通レイヤーを追加する関数
+    function addStandardLayers(countryId) {
         if (!map) return;
-        const sourceId = `country-${countryId}-source`;
+        const isJapan = (countryId === 'japan');
+        const sourceId = isJapan ? 'japan-shortbread' : `country-${countryId}-source`;
 
-        // 既にソースが存在していればスキップ
-        if (map.getSource(sourceId)) return;
+        // 既に道路レイヤーが存在していればスキップ
+        if (map.getSource(sourceId) && map.getLayer(`${sourceId}-streets`)) return;
 
-        // ソースの追加
-        map.addSource(sourceId, {
-            type: "vector",
-            tiles: [`pmtiles://country/${countryId}/{z}/{x}/{y}`],
-            minzoom: 0,
-            maxzoom: 14
+        // ソースがまだマップに登録されていない場合（国別PMTilesの場合のみ）のフォールバック
+        if (!isJapan && !map.getSource(sourceId)) {
+            map.addSource(sourceId, {
+                type: "vector",
+                tiles: [`pmtiles://country/${countryId}/{z}/{x}/{y}`],
+                minzoom: 0,
+                maxzoom: 14
+            });
+        }
+
+        // ★ 追加: ズーム11以降でも海や水域が消えないよう、各ソースの water / ocean レイヤーを描画する
+        map.addLayer({
+            "id": `${sourceId}-ocean`,
+            "type": "fill",
+            "source": sourceId,
+            "source-layer": "ocean",
+            "minzoom": isJapan ? 10 : 7,
+            "paint": { "fill-color": "#a0c8f0" }
         });
 
-        // 1. 道路（streets）レイヤー
         map.addLayer({
-            "id": `country-${countryId}-streets`,
+            "id": `${sourceId}-water`,
+            "type": "fill",
+            "source": sourceId,
+            "source-layer": "water",
+            "minzoom": isJapan ? 10 : 7,
+            "paint": { "fill-color": "#a0c8f0" }
+        });
+
+        // 水域（water_polygons）レイヤーの追加
+        map.addLayer({
+            "id": `${sourceId}-water-polygons`,
+            "type": "fill",
+            "source": sourceId,
+            "source-layer": "water_polygons",
+            "minzoom": isJapan ? 11 : 7,
+            "paint": { "fill-color": "#a0c8f0" }
+        });
+
+        // 1. 境界線（boundaries） ※日本のみ必要であればここで追加、または全共通
+        if (isJapan && !map.getLayer('japan-boundaries')) {
+            map.addLayer({
+                "id": "japan-boundaries",
+                "type": "line",
+                "source": sourceId,
+                "source-layer": "boundaries",
+                "minzoom": 6,
+                "paint": {
+                    "line-color": "#888888",
+                    "line-width": ["interpolate", ["linear"], ["zoom"], 6, 1, 13, 2],
+                    "line-dasharray": [4, 3]
+                }
+            });
+        }
+
+        // 2. 道路（streets）
+        map.addLayer({
+            "id": `${sourceId}-streets`,
             "type": "line",
             "source": sourceId,
             "source-layer": "streets",
-            "minzoom": 7,
+            "minzoom": isJapan ? 10 : 7,
             "paint": {
                 "line-color": [
                     "match", ["get", "kind"],
@@ -577,13 +609,13 @@
                     "primary", "#fff1b8",
                     "#ffffff"
                 ],
-                "line-width": ["interpolate", ["linear"], ["zoom"], 7, 0.5, 14, 3]
+                "line-width": ["interpolate", ["linear"], ["zoom"], isJapan ? 10 : 7, 0.5, 14, 3]
             }
-        }, "japan-boundaries");
+        });
 
-        // 2. 建物（buildings）レイヤー
+        // 3. 建物（buildings）
         map.addLayer({
-            "id": `country-${countryId}-buildings`,
+            "id": `${sourceId}-buildings`,
             "type": "fill",
             "source": sourceId,
             "source-layer": "buildings",
@@ -592,14 +624,14 @@
                 "fill-color": "#e2e2e2",
                 "fill-outline-color": "#d0d0d0"
             }
-        }, `country-${countryId}-streets`);
+        });
 
-        // ★ 3. 地名・都市名ラベル（place_labels）レイヤー（追加）
+        // 4. 地名ラベル（place_labels）
         map.addLayer({
-            "id": `country-${countryId}-place-labels`,
+            "id": `${sourceId}-place-labels`,
             "type": "symbol",
             "source": sourceId,
-            "source-layer": "place_labels", // Shortbread規格の地名レイヤー
+            "source-layer": "place_labels",
             "minzoom": 4,
             "layout": {
                 "text-field": ["coalesce", ["get", "name_ja"], ["get", "name_en"], ["get", "name"]],
@@ -614,12 +646,12 @@
             }
         });
 
-        // ★ 4. 施設・POIラベル（pois）レイヤー（追加）
+        // 5. POIラベル（pois）
         map.addLayer({
-            "id": `country-${countryId}-poi-labels`,
+            "id": `${sourceId}-poi-labels`,
             "type": "symbol",
             "source": sourceId,
-            "source-layer": "pois", // Shortbread規格のPOIレイヤー
+            "source-layer": "pois",
             "minzoom": 12,
             "layout": {
                 "text-field": ["coalesce", ["get", "name_ja"], ["get", "name_en"], ["get", "name"]],
@@ -2335,23 +2367,14 @@
 
         points.forEach(pt => {
             const name = pt.name || pt.rawName || '地点';
-            const address = pt.address || '';
             const timestamp = pt.timestamp || '';
             const lat = pt.coordinates ? pt.coordinates[1] : (pt.lat || 0);
             const lng = pt.coordinates ? pt.coordinates[0] : (pt.lng || 0);
             
-            // ファイル名の取得（pt.file_name や pt.fileName から取得）
-            const fileName = pt.file_name || pt.fileName || '';
-
+            // address と file_name の出力を削除
             kmlContent += `    <Placemark>
             <name>${escapeXml(name)}</name>
-            <address>${escapeXml(address)}</address>
             ${timestamp ? `<TimeStamp><when>${timestamp}</when></TimeStamp>` : ''}
-            <ExtendedData>
-                <Data name="file_name">
-                    <value>${escapeXml(fileName)}</value>
-                </Data>
-            </ExtendedData>
             <Point>
                 <coordinates>${lng},${lat},0</coordinates>
             </Point>
@@ -2360,7 +2383,7 @@
 
         kmlContent += `  </Document>\n</kml>`;
         downloadFile(kmlContent, 'export_points.kml', 'application/vnd.google-earth.kml+xml');
-    }
+}
 
     function escapeXml(str) {
         return String(str).replace(/[<>&'"]/g, (c) => {
