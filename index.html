@@ -634,7 +634,13 @@
             "source-layer": "place_labels",
             "minzoom": 4,
             "layout": {
-                "text-field": ["coalesce", ["get", "name_ja"], ["get", "name_en"], ["get", "name"]],
+                // sourceId が 'japan' の時とそれ以外の時で text-field を切り替える
+                "text-field": [
+                    "case",
+                    ["==", countryId, "japan"],
+                    ["coalesce", ["get", "name_ja"], ["get", "name"]], // japan の場合
+                    ["coalesce", ["get", "name_ja"], ["get", "name_en"], ["get", "name"]] // その他の国の場合
+                ],
                 "text-font": ["Open Sans Regular"],
                 "text-size": ["interpolate", ["linear"], ["zoom"], 4, 10, 14, 15],
                 "text-max-width": 8
