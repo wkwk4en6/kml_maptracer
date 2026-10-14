@@ -1203,6 +1203,19 @@
         // 時間フィルタが残っている場合はその条件で再描画、なければ全件再描画
         await applyCombinedFilter();
         
+        // グラフの再集計・更新
+        if (currentTimeRange && currentTimeRange.start_time && currentTimeRange.end_time) {
+            const currentInterval = document.getElementById('aggregate-interval')?.value || '1d';
+            updateChartWithFilteredPoints(currentInterval);
+        } else {
+            const currentInterval = document.getElementById('aggregate-interval')?.value || '1d';
+            fetchAndRenderAggregate(currentInterval);
+
+            // ★ 追加: フィルタが完全に解除された場合は、選択件数の表示を非表示または全件表示にリセットする
+            const countLabel = document.getElementById('selected-count-label');
+            if (countLabel) countLabel.style.display = 'none';
+        }
+        
         document.getElementById('status-msg').innerText = "表示範囲のフィルタを解除しました";
     }
 
