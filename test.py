@@ -2,7 +2,7 @@ import json
 from pmtiles.reader import Reader, MmapSource
 
 # japan.pmtiles のパスを指定
-file_path = "world-pmtiles/malaysia-singapore-brunei.pmtiles"
+file_path = "world-pmtiles/japan.pmtiles"
 
 with open(file_path, "rb") as f:
     # ソースを読み込んでメタデータを取得

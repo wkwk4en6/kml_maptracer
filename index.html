@@ -990,7 +990,6 @@
         return isNaN(d.getTime()) ? null : d;
     }
 
-    // --- 3. グラフリセットボタン（btn-reset-zoom）のイベントリスナー修正 ---
     document.getElementById('btn-reset-zoom').addEventListener('click', async function() {
         if (myChart) {
             myChart.resetZoom();
@@ -1001,54 +1000,48 @@
         const countLabel = document.getElementById('selected-count-label');
         if (countLabel) countLabel.style.display = 'none';
 
-        // 1. フィルタ条件を完全にクリア
+        // 時間フィルタの状態をクリア
         currentTimeRange = null;
-        currentBounds = null;
-        currentFilteredPoints = null; // ★ フィルタ済みキャッシュを完全に破棄して全件表示に戻す
 
-        // 2. 表示範囲のリセットボタンも隠す
-        const boundsResetBtn = document.getElementById('btn-reset-bounds');
-        if (boundsResetBtn) boundsResetBtn.style.display = 'none';
+        // 表示範囲フィルタが残っていればその条件を維持して再フィルタ、なければ完全リセット
+        if (currentBounds) {
+            await applyCombinedFilter();
+        } else {
+            currentFilteredPoints = null;
 
-        // 3. 全てのkmlFilesが持つ全ポイントを地図ソースに再設定
-        kmlFiles.forEach(file => {
-            const sourceId = file.mapIds?.sourceId;
-            if (sourceId && map.getSource(sourceId) && file.points) {
-                const geojson = {
-                    type: "FeatureCollection",
-                    features: file.points.map((pt, index) => ({
-                        type: "Feature",
-                        geometry: { type: "Point", coordinates: pt.coordinates },
-                        properties: {
-                            seq: pt.seq !== undefined ? pt.seq : index + 1,
-                            id: pt.id,
-                            name: pt.name,
-                            address: pt.address || '',
-                            timestamp: pt.timestamp,
-                            timestamp_ms: pt.timestamp ? new Date(pt.timestamp).getTime() : 0
-                        }
-                    }))
-                };
-                map.getSource(sourceId).setData(geojson);
+            kmlFiles.forEach(file => {
+                const sourceId = file.mapIds?.sourceId;
+                if (sourceId && map.getSource(sourceId) && file.points) {
+                    const geojson = {
+                        type: "FeatureCollection",
+                        features: file.points.map((pt, index) => ({
+                            type: "Feature",
+                            geometry: { type: "Point", coordinates: pt.coordinates },
+                            properties: {
+                                seq: pt.seq !== undefined ? pt.seq : index + 1,
+                                id: pt.id,
+                                name: pt.name,
+                                address: pt.address || '',
+                                timestamp: pt.timestamp,
+                                timestamp_ms: pt.timestamp ? new Date(pt.timestamp).getTime() : 0
+                            }
+                        }))
+                    };
+                    map.getSource(sourceId).setData(geojson);
+                }
+            });
+
+            updateSidebarFileList();
+
+            if (densityMode !== 'off') {
+                updateDensityLayers();
             }
-        });
-
-        // 4. サイドバーのリストと件数表示を全件の状態に復元
-        updateSidebarFileList();
-
-        if (densityMode !== 'off') {
-            updateDensityLayers();
         }
 
-        if (typeof adjustKmlWindowPosition === 'function') {
-            adjustKmlWindowPosition();
-        }
-
-        // 5. グラフを全データ状態で再集計
         const currentInterval = document.getElementById('aggregate-interval')?.value || '1d';
         fetchAndRenderAggregate(currentInterval);
         
-        document.getElementById('status-msg').innerText = "フィルタを解除しました（全件表示）";
+        document.getElementById('status-msg').innerText = "時間別集計の選択を解除しました";
     });
 
     map.addControl(new maplibregl.AttributionControl({
@@ -1195,19 +1188,16 @@
     }
     
     async function resetBoundsFilter() {
-        const resetBoundsBtn = document.getElementById('btn-reset-bounds');
-        if (resetBoundsBtn) resetBoundsBtn.style.display = 'none';
+        const boundsResetBtn = document.getElementById('btn-reset-bounds');
+        if (boundsResetBtn) boundsResetBtn.style.display = 'none';
 
-        // 表示範囲状態のみを解除
+        // 表示範囲の状態のみをクリア
         currentBounds = null;
 
-        if (currentTimeRange) {
-            // 時間フィルタが残っている場合は時間フィルタのみで再計算
-            await applyCombinedFilter();
-        } else {
-            // 時間フィルタも無ければ完全に全件リセット
-            document.getElementById('btn-reset-zoom')?.click();
-        }
+        // 時間フィルタが残っている場合はその条件で再描画、なければ全件再描画
+        await applyCombinedFilter();
+        
+        document.getElementById('status-msg').innerText = "表示範囲のフィルタを解除しました";
     }
 
     // --- 2. 表示範囲フィルタ関数の修正 ---
